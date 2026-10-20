@@ -32,7 +32,7 @@
   },
   "type": "module",
   "engines": {
-    "node": ">=22.13"
+    "node": ">=24"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.135.0",

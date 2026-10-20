@@ -1,0 +1,48 @@
+name: Something isn't working
+description: A bug, an error page, or something that behaves differently from the README.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Please **don't paste customer names, phone numbers, secrets or `.dev.vars`** here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Sign in as an office manager
+        2. Open Reviews → Needs a tech
+        3. …
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Live site on Cloudflare
+        - Local preview (npm run dev)
+        - Both
+        - Setup or deploy
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: RootView version
+      description: The `version` in package.json, or the commit you deployed.
+      placeholder: 1.2.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error messages or logs
+      description: From the page, `npx wrangler pages deployment tail`, or the terminal. Remove anything private first.
+      render: text

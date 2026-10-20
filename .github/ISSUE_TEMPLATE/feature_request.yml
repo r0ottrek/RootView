@@ -1,0 +1,21 @@
+name: Idea or request
+description: Something RootView could do better, or a review site or integration you'd like.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What's the problem?
+      description: What are you trying to do, and what gets in the way? (For example, "our crews are three people, and only two get credit".)
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: How you picture it working. Screenshots or examples from other tools are welcome.
+  - type: input
+    id: business
+    attributes:
+      label: What kind of business do you run?
+      placeholder: Plumbing, 12 techs, 2 locations

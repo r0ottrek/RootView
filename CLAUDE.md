@@ -45,7 +45,7 @@ phase at a time, say what you're about to do before each phase, and stop at ever
 ### Phase 1: Check the computer
 
 ```bash
-node --version   # needs 22.13 or newer (node:sqlite is used by the local preview)
+node --version   # needs 24 or newer (the current LTS; the local preview uses its built-in SQLite)
 git --version
 npm install
 ```

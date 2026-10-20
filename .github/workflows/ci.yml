@@ -12,17 +12,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    strategy:
-      matrix:
-        # The oldest Node the README supports, and the current one.
-        node: ['22.13.0', 24]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: ${{ matrix.node }}
+          # The version the README asks for (the current LTS line).
+          node-version: 24
           cache: npm
       - run: npm ci
       - name: Type check

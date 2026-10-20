@@ -1,0 +1,5 @@
+# Plain-text files are stored and checked out with LF line endings on every OS.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.woff2 binary

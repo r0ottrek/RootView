@@ -1,18 +1,42 @@
-# RootView
+<p align="center">
+  <img src="public/static/icon-192.png" width="72" height="72" alt="">
+</p>
 
-**Self-hosted review tracking for field-service teams.** Every technician gets their own NFC tag or QR code. A customer taps it, rates the visit, and picks where to leave a public review. When the review shows up on Google, RootView works out which tech earned it and credits them, with points they can trade for rewards.
+<h1 align="center">RootView</h1>
 
-It's built for plumbers, electricians, HVAC, cleaners, locksmiths, landscapers, or any business whose people go to the customer. It runs on Cloudflare's free plan, has no monthly fees, and keeps your customers' data in your own account.
+<p align="center">
+  <strong>Self-hosted review tracking for field-service teams.</strong><br>
+  An NFC tag or QR code for every technician, Google reviews matched to the tech who earned them,<br>
+  and a leaderboard with rewards. Runs free on Cloudflare.
+</p>
 
-[![CI](https://github.com/r0ottrek/RootView/actions/workflows/ci.yml/badge.svg)](https://github.com/r0ottrek/RootView/actions/workflows/ci.yml)
-![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
+<p align="center">
+  <a href="https://github.com/r0ottrek/RootView/actions/workflows/ci.yml"><img src="https://github.com/r0ottrek/RootView/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT license"></a>
+  <img src="https://img.shields.io/badge/runs_on-Cloudflare_free_plan-f38020" alt="Runs on Cloudflare's free plan">
+  <img src="https://img.shields.io/badge/node-%E2%89%A524-339933" alt="Node 24 or newer">
+</p>
 
-| | |
-|---|---|
-| ![Customer rating page](docs/screenshots/customer.jpg) | ![Office dashboard](docs/screenshots/dashboard.jpg) |
-| ![Branding: colors, logo and icon](docs/screenshots/branding.jpg) | ![The technician app](docs/screenshots/tech-app.jpg) |
+<p align="center">
+  <a href="#try-it-on-your-computer-5-minutes">Try the demo</a> ·
+  <a href="#two-ways-to-set-it-up">Set it up</a> ·
+  <a href="#screenshots">Screenshots</a> ·
+  <a href="#how-a-review-gets-credited">How matching works</a> ·
+  <a href="#faq">FAQ</a> ·
+  <a href="CHANGELOG.md">Changelog</a>
+</p>
 
----
+![The RootView office dashboard, a customer's rating page, and the technician app](docs/screenshots/hero.jpg)
+
+## Why RootView
+
+Reviews win field-service jobs, and the people who earn them are your techs. Paid review tools usually charge a monthly fee per location to track this. RootView does the core of it on Cloudflare's free plan, with your customers' data in your own account:
+
+1. Each tech gives the customer their tag: an NFC sticker or card, or a QR code.
+2. The customer rates the visit, and Google, Yelp, BBB or Facebook is one tap away.
+3. When the review appears, RootView works out which tech earned it and credits them, with points they trade for rewards you choose.
+
+It's built for plumbers, electricians, HVAC, cleaners, locksmiths, landscapers, pest control, or any business whose people go to the customer.
 
 ## What you get
 
@@ -23,6 +47,39 @@ It's built for plumbers, electricians, HVAC, cleaners, locksmiths, landscapers, 
 - **Your brand, set up in the browser.** Upload a logo and app icon, choose a preset or any colors you like, and pick corner style and fonts. A live preview and a built-in readability check show the result. No code needed.
 - **Several locations.** With two or more Google profiles, each customer is sent to the profile for where the job was.
 - **Honest by design.** Every customer sees the review links, whatever rating they give. Hiding them from unhappy customers ("review gating") breaks Google's rules. Unhappy customers are also offered a call-back, so the office can make it right.
+
+## Screenshots
+
+All from the built-in demo (`npm run dev:demo`), where every name and review is made up.
+
+**The office**
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/dashboard.jpg" alt="Dashboard: new reviews, average rating, taps, conversion, reviews per week"><br><sub><b>Dashboard.</b> Reviews per week, taps, conversion, and what needs attention.</sub></td>
+    <td width="50%"><img src="docs/screenshots/review-detail.jpg" alt="A review with the evidence for which tech earned it"><br><sub><b>Every credit shows its evidence.</b> Here, the customer rated Sam on their tag 36 minutes before posting.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/reviews.jpg" alt="Reviews list with filters and the credited tech on each"><br><sub><b>Reviews.</b> Filter by tech, site or status, credit a crew, and reply.</sub></td>
+    <td><img src="docs/screenshots/team.jpg" alt="Team list with tag links, reviews, ratings and points"><br><sub><b>Team.</b> Each tech's tag link, reviews, rating and points, and whether they've signed up.</sub></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/branding.jpg" alt="Branding: presets, colors, corners and fonts with a live preview"><br><sub><b>Branding.</b> Presets or your own colors, with a live preview and a readability check.</sub></td>
+    <td><img src="docs/screenshots/dashboard-light.jpg" alt="The dashboard in the light Daylight theme"><br><sub><b>Any look you like.</b> The same dashboard in the light "Daylight" preset.</sub></td>
+  </tr>
+</table>
+
+**Customers and techs** (phones)
+
+<table>
+  <tr>
+    <td width="20%"><img src="docs/screenshots/customer.jpg" alt="Customer rating page"><br><sub><b>Rate the visit</b></sub></td>
+    <td width="20%"><img src="docs/screenshots/customer-share.jpg" alt="Choose a review site"><br><sub><b>Pick a review site</b></sub></td>
+    <td width="20%"><img src="docs/screenshots/tech-app.jpg" alt="Tech app home"><br><sub><b>Tech app</b></sub></td>
+    <td width="20%"><img src="docs/screenshots/tech-qr.jpg" alt="Tech QR code"><br><sub><b>QR code to show</b></sub></td>
+    <td width="20%"><img src="docs/screenshots/tech-rewards.jpg" alt="Tech rewards and points"><br><sub><b>Points and rewards</b></sub></td>
+  </tr>
+</table>
 
 ## Who signs in where
 
@@ -66,7 +123,7 @@ Follow the guide below. [Try it on your computer](#try-it-on-your-computer-5-min
 
 ## Try it on your computer (5 minutes)
 
-You need [Node.js](https://nodejs.org) 22.13 or newer.
+You need [Node.js](https://nodejs.org) 24 or newer (the current LTS).
 
 ```bash
 git clone https://github.com/r0ottrek/RootView.git rootview
@@ -405,6 +462,25 @@ Yes. Techs earn points from your own rewards catalog, which is an internal staff
 
 **Can techs give themselves points by tapping their own tag?**
 Ratings on a tag earn 0 points by default, and staff phones signed in to the app aren't counted as visits.
+
+**What does it cost to run?**
+Nothing for the app itself: Cloudflare's free plan covers a company with dozens of techs. Optional extras have their own pricing: Resend's free tier covers alert emails for most businesses, and AI reply drafts are billed per use by Anthropic. NFC stickers cost well under a dollar each.
+
+**Is there a hosted version, or a live demo online?**
+No. RootView is self-hosted, so your customers' data stays in your own Cloudflare account. The [local demo](#try-it-on-your-computer-5-minutes) takes about 5 minutes and has a full company of made-up data to click around.
+
+**Do I need to be a developer?**
+No. If you have [Claude Code](https://claude.com/claude-code), it can do the setup for you ([Option A](#option-a-let-claude-code-do-it)). Otherwise the guide is copy and paste, about 20 minutes start to finish.
+
+**Does it work without Google's API?**
+Yes. Google approves Business Profile API access per project, which can take a few days. Until then (or instead), add Google, Yelp or BBB reviews by hand and RootView matches them the same way.
+
+## Getting help
+
+- **Questions, bugs and ideas:** [open an issue](https://github.com/r0ottrek/RootView/issues/new/choose).
+- **Security problems:** report them privately, as described in [SECURITY.md](SECURITY.md).
+- **What changed:** [CHANGELOG.md](CHANGELOG.md).
+- **Contributing:** see [CONTRIBUTING.md](CONTRIBUTING.md) and the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
