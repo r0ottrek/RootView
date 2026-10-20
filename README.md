@@ -30,7 +30,13 @@
 
 ## Why RootView
 
-Reviews win field-service jobs, and the people who earn them are your techs. Paid review tools usually charge a monthly fee per location to track this. RootView does the core of it on Cloudflare's free plan, with your customers' data in your own account:
+I built RootView because I'm tired of digital companies charging absurd amounts of money for software you can make yourself, and have run better.
+
+The review-tracking service we were paying for, ReviewBuzz, cost us hundreds of dollars a month. It also charged $200 for 20 NFC tags, the same kind of tags you can buy for around $5 on Amazon. That's crazy.
+
+So I built my own, and I'm giving it away. I want people to be able to fix their problems with open-source software they own, instead of renting it forever.
+
+Reviews win field-service jobs, and the people who earn them are your techs. RootView tracks that on Cloudflare's free plan, with your customers' data in your own account:
 
 1. Each tech gives the customer their tag: an NFC sticker or card, or a QR code.
 2. The customer rates the visit, and Google, Yelp, BBB or Facebook is one tap away.
@@ -474,6 +480,9 @@ No. If you have [Claude Code](https://claude.com/claude-code), it can do the set
 
 **Does it work without Google's API?**
 Yes. Google approves Business Profile API access per project, which can take a few days. Until then (or instead), add Google, Yelp or BBB reviews by hand and RootView matches them the same way.
+
+**Can it import Yelp reviews automatically?**
+Not today. Yelp's API returns at most three shortened review excerpts per business, and only on its paid plans, and Yelp doesn't offer business owners a way to download their full review history. Add Yelp reviews by hand (Reviews → Add a review); RootView matches them to techs like Google reviews, and Tag activity lists the customers who went to Yelp, so you know which reviews to look for.
 
 ## Getting help
 
