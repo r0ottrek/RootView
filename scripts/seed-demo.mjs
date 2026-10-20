@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Local demo data for a made-up company, "Brightwater Plumbing & Air": a field team, customers tapping their
+ * Local demo data for a made-up company, "RootView": a field team, customers tapping their
  * tags, and the Google reviews some of them leave. Every name, phone number and review here is invented.
  * Reviews go in as "pending" so the app's own matching engine credits them the first time the dashboard
  * loads, so the demo exercises the real logic.
@@ -12,7 +12,6 @@
  *   techs:   any demo tech's username (e.g. "maya") / DEMO_ADMIN_PASSWORD at /me/login
  * Local database only: it refuses --remote.
  */
-import { execSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { webcrypto as crypto } from 'node:crypto';
 
@@ -31,7 +30,7 @@ if (!ADMIN_PASSWORD || ADMIN_PASSWORD.length < 10) {
   console.error('Set DEMO_ADMIN_PASSWORD (10+ characters) in .dev.vars first.');
   process.exit(1);
 }
-const COMPANY = 'Brightwater Plumbing & Air';
+const COMPANY = 'RootView';
 
 // ---------- helpers ----------
 let seed = 20261020;
@@ -84,7 +83,7 @@ const GOOD_WITH = [
 ];
 const GOOD_WITHOUT = [
   'Fast, professional service on our {service}. Fair price and great communication from the office.',
-  'Brightwater replaced our {service}. Crew was respectful and the job was done right.',
+  'RootView replaced our {service}. Crew was respectful and the job was done right.',
   'Excellent work on the {service}. Scheduling was easy and they showed up when they said.',
   'Great company. Honest assessment of our {service} and no upselling.',
   'Five stars. The {service} repair was quick and the price matched the quote.',
@@ -99,8 +98,8 @@ const BAD = [
 const TAP_COMMENTS_GOOD = ['Super helpful and friendly!', 'On time and very clean work.', 'Explained everything clearly.', 'Thank you for coming out so quickly.', null, null, null, null];
 const TAP_COMMENTS_BAD = ['Arrived later than the window we were given.', 'Price ended up higher than quoted.', 'Left some mess under the sink.', 'Still hearing a drip after the visit.'];
 const REPLIES = [
-  'Thank you so much for the kind words! We will pass them along to the team. — The Brightwater team',
-  'We really appreciate you taking the time to share this. Thanks for choosing us! — The Brightwater team',
+  'Thank you so much for the kind words! We will pass them along to the team. — The RootView team',
+  'We really appreciate you taking the time to share this. Thanks for choosing us! — The RootView team',
 ];
 
 const fill = (t, tech, service) => t.replace(/\{tech\}/g, tech).replace(/\{service\}/g, service);
@@ -206,15 +205,16 @@ const SETTINGS = {
   demo: true,
   tracking_start: trackingStart,
   company_name: COMPANY,
+  public_base_url: `http://localhost:${process.env.PORT || 8787}`,
   office_phone: '(312) 555-0100',
   website_url: 'https://example.com/',
   timezone: 'America/Chicago',
   alert_emails: ['office@example.com'],
-  reply_signature: 'The Brightwater team',
+  reply_signature: 'The RootView team',
   reply_context: 'Family-owned plumbing, heating and air conditioning company.',
   sites: [
     { id: 'google', label: 'Google', url: 'https://g.page/r/demo-northside/review', enabled: true },
-    { id: 'yelp', label: 'Yelp', url: 'https://www.yelp.com/biz/brightwater-demo', enabled: true },
+    { id: 'yelp', label: 'Yelp', url: 'https://www.yelp.com/biz/rootview-demo', enabled: true },
     { id: 'bbb', label: 'BBB', url: '', enabled: false },
     { id: 'facebook', label: 'Facebook', url: '', enabled: false },
   ],
@@ -244,6 +244,5 @@ sql.push(`INSERT INTO points (id, tech_id, amount, reason, redemption_id, create
 writeFileSync('.demo-seed.sql', sql.join('\n') + '\n');
 console.log(`Demo: ${TECHS.length} techs, ${taps.length} tag visits, ${reviews.length} reviews (${reviews.filter((r) => r.posted >= trackingStart).length} since tracking started).`);
 if (!process.argv.includes('--sql-only')) {
-  execSync('npx wrangler d1 execute DB --local --file .demo-seed.sql', { stdio: 'inherit' });
-  console.log(`\nDone. Start the app (npm run dev) and sign in at /admin with ${ADMIN_EMAIL}. The first dashboard load matches the reviews.`);
+  console.log(`\nWrote .demo-seed.sql. Load it by starting the preview with demo data: npm run dev:demo (sign in at /admin with ${ADMIN_EMAIL}).`);
 }

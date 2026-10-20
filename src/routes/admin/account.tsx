@@ -57,11 +57,13 @@ async function accountPage(c: Ctx, setup?: { secret: string; error?: string }) {
                 <button type="button" class="linkbtn small" data-copy={setup.secret}>Copy key</button>
               </div>
             </div>
-            <p class="small muted">2. Enter the 6-digit code it shows to finish.</p>
+            <p class="small muted">2. Enter the 6-digit code it shows, and your password, to finish.</p>
             {setup.error && <p class="flash flash--err" role="alert">{setup.error}</p>}
             <form method="post" action="/admin/account/2fa/confirm" class="inline-form">
               <label class="sr-only" for="tc">6-digit code</label>
-              <input id="tc" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength={7} required autocomplete="one-time-code" class="w-sm" placeholder="123456" />
+              <input id="tc" name="code" inputmode="numeric" pattern="[0-9 ]{6,7}" maxlength={7} required autocomplete="one-time-code" class="w-sm" placeholder="123456" title="The 6 digits from your authenticator app" />
+              <label class="sr-only" for="tpw">Your password</label>
+              <input id="tpw" name="password" type="password" required autocomplete="current-password" class="w-sm" placeholder="Your password" />
               <button class="btn btn--red btn--sm" type="submit">Turn on</button>
             </form>
             {!c.env.ENCRYPTION_KEY && <p class="small dim"><Icon name="lock" size={14} /> For whoever runs this site: set ENCRYPTION_KEY so these keys are stored encrypted.</p>}
@@ -144,7 +146,11 @@ account.post('/2fa/confirm', async (c) => {
   if (!me || me.totp_enabled || !me.totp_secret) return c.redirect('/admin/account#2fa', 303);
   const secret = await open(c.env, me.totp_secret);
   if (await overLimit(c.env.DB, `mfa-setup:${a.id}`, 10, 15 * MINUTE)) return accountPage(c, { secret, error: 'Too many tries. Wait 15 minutes.' });
-  const step = await verifyTotp(secret, str((await c.req.parseBody()).code, 10), now());
+  const b = await c.req.parseBody();
+  // The password too, so someone using a signed-in computer they found can't tie the account to their own phone.
+  const pw = typeof b.password === 'string' ? b.password.slice(0, 200) : '';
+  if (!me.password_hash || !(await verifyPassword(pw, me.password_hash))) return accountPage(c, { secret, error: 'That password is wrong.' });
+  const step = await verifyTotp(secret, str(b.code, 10), now());
   if (step == null) return accountPage(c, { secret, error: "That code didn't match. Check your phone's clock is set automatically, then try the newest code." });
   await run(c.env.DB, `UPDATE admins SET totp_enabled = 1, totp_last_step = ? WHERE id = ?`, step, a.id);
   // Anyone who had the password alone shouldn't stay signed in elsewhere.

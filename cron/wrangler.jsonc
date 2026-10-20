@@ -5,8 +5,9 @@
   "main": "index.js",
   "compatibility_date": "2026-09-01",
   "triggers": { "crons": ["*/15 * * * *"] },
-  // Your Pages address. The *.pages.dev one keeps working after you add a custom domain, so it never needs changing.
-  "vars": { "APP_URL": "https://rootview.pages.dev" },
+  // Your Pages address, e.g. "https://rootview.pages.dev" (the one `npx wrangler pages project list` shows). Left
+  // empty on purpose: the scheduler sends CRON_SECRET there, so it must be your site, not a guess.
+  "vars": { "APP_URL": "" },
   // Schedule only: no public address of its own.
   "workers_dev": false,
   "observability": { "enabled": true }

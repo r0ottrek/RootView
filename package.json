@@ -1,9 +1,24 @@
 {
   "name": "rootview",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "Self-hosted review tracking for field-service teams: an NFC tag or QR code per technician, Google review matching, a leaderboard, rewards, and a separate app for techs. Runs free on Cloudflare.",
   "license": "MIT",
-  "keywords": ["reviews", "google-reviews", "nfc", "qr-code", "field-service", "cloudflare-pages", "cloudflare-d1", "hono"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/r0ottrek/RootView.git"
+  },
+  "homepage": "https://github.com/r0ottrek/RootView#readme",
+  "bugs": "https://github.com/r0ottrek/RootView/issues",
+  "keywords": [
+    "reviews",
+    "google-reviews",
+    "nfc",
+    "qr-code",
+    "field-service",
+    "cloudflare-pages",
+    "cloudflare-d1",
+    "hono"
+  ],
   "scripts": {
     "dev": "node scripts/dev-node.mjs",
     "dev:demo": "node scripts/dev-node.mjs --demo",

@@ -40,6 +40,7 @@ export function parseImage(dataUrl: string, maxBytes: number): { mime: string; d
   const m = DATA_URL.exec(dataUrl);
   if (!m) return { error: 'Use a PNG, JPEG or WebP image.' };
   const [, mime, data] = m;
+  if (data.length % 4 !== 0) return { error: 'That image could not be read.' };
   const bytes = Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0);
   if (bytes > maxBytes) return { error: `That image is too large (${Math.round(bytes / 1024)} KB; the limit is ${Math.round(maxBytes / 1024)} KB).` };
   let head: Uint8Array;
@@ -78,6 +79,9 @@ export async function serveAsset(c: Context<AppEnv>, name: AssetName): Promise<R
     const res = await c.env.ASSETS.fetch(new Request(new URL(DEFAULT_FILE[name], c.req.url)));
     return new Response(res.body, { status: res.status, headers: { 'content-type': res.headers.get('content-type') ?? 'image/png', 'cache-control': cache, ...ASSET_HEADERS } });
   }
-  const bytes = Uint8Array.from(atob(row.data), (ch) => ch.charCodeAt(0));
+  // A plain loop: much cheaper than a per-byte callback on a 400 KB logo, inside the 10 ms CPU budget.
+  const bin = atob(row.data);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new Response(bytes, { headers: { 'content-type': row.mime, 'cache-control': cache, ...ASSET_HEADERS } });
 }

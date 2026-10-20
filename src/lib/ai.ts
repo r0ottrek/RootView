@@ -39,8 +39,17 @@ export interface DraftInput {
 
 const PLATFORM: Record<string, string> = { google: 'Google', yelp: 'Yelp', bbb: 'Better Business Bureau', facebook: 'Facebook' };
 
+/**
+ * Review text is written by strangers, so it goes in as plain data: control characters removed and anything that
+ * looks like the closing tag turned harmless, so it can't end the quoted block and pose as instructions.
+ */
+function asData(text: string, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/[\u0000-\u0008\u000b-\u001f\u007f\u2028\u2029]/g, ' ').replace(/<\s*\/?\s*review\s*>/gi, '[review]').trim().slice(0, max);
+}
+
 export async function draftReply(apiKey: string, s: Settings, r: DraftInput, model = DEFAULT_MODEL): Promise<string> {
-  const client = new Anthropic({ apiKey });
+  const client = new Anthropic({ apiKey, timeout: 30_000, maxRetries: 1 });
   const prompt = [
     `Platform: ${PLATFORM[r.platform] ?? r.platform}`,
     `Stars: ${r.rating ?? 'not given'} of 5`,
@@ -49,8 +58,8 @@ export async function draftReply(apiKey: string, s: Settings, r: DraftInput, mod
     `Signature: ${replySignature(s)}`,
     '',
     '<review>',
-    `Reviewer name: ${r.reviewer || '(no name)'}`,
-    r.body.trim().slice(0, 4000) || '(star rating only, no text)',
+    `Reviewer name: ${asData(r.reviewer ?? '', 80).replace(/\s+/g, ' ') || '(no name)'}`,
+    asData(r.body, 4000) || '(star rating only, no text)',
     '</review>',
   ].join('\n');
 

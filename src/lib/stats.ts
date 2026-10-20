@@ -35,7 +35,7 @@ export async function leaderboard(db: D1Database, start: number, end: number, on
     ) cr ON cr.tech_id = t.id
     LEFT JOIN (
       SELECT tech_id, COUNT(*) AS taps, COUNT(rating) AS ratings, AVG(rating) AS tap_avg, COUNT(clicked_at) AS clicks,
-             COUNT(review_id) AS converted
+             COUNT(CASE WHEN clicked_at IS NOT NULL THEN review_id END) AS converted
       FROM taps WHERE created_at >= ?1 AND created_at < ?2 GROUP BY tech_id
     ) tp ON tp.tech_id = t.id
     LEFT JOIN (
@@ -75,7 +75,7 @@ export async function kpis(db: D1Database, start: number, end: number, prevStart
       (SELECT COUNT(*) FROM taps WHERE created_at >= ?3 AND created_at < ?4) AS prev_taps,
       (SELECT COUNT(rating) FROM taps WHERE created_at >= ?1 AND created_at < ?2) AS ratings,
       (SELECT COUNT(clicked_at) FROM taps WHERE created_at >= ?1 AND created_at < ?2) AS clicks,
-      (SELECT COUNT(review_id) FROM taps WHERE created_at >= ?1 AND created_at < ?2) AS converted,
+      (SELECT COUNT(CASE WHEN clicked_at IS NOT NULL THEN review_id END) FROM taps WHERE created_at >= ?1 AND created_at < ?2) AS converted,
       (SELECT COUNT(*) FROM reviews WHERE status = 'unassigned' AND posted_at >= ?5) AS unassigned,
       (SELECT COUNT(*) FROM taps WHERE rating <= ?6 AND resolved_at IS NULL) AS low_open,
       (SELECT COUNT(*) FROM reviews WHERE platform = 'google' AND reply IS NULL AND status <> 'history' AND posted_at >= ?5) AS no_reply,
@@ -107,4 +107,3 @@ export async function pointsBalance(db: D1Database, techId: string): Promise<num
   return row?.n ?? 0;
 }
 
-export const WEEK = 7 * DAY;

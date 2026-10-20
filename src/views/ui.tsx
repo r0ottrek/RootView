@@ -35,6 +35,8 @@ const PATHS: Record<string, string> = {
   down: 'M12 5v14m6-6l-6 6-6-6',
   inbox: 'M4 13l2.5-7.5A2 2 0 0 1 8.4 4h7.2a2 2 0 0 1 1.9 1.5L20 13M4 13v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5M4 13h4.5l1.5 2.5h4l1.5-2.5H20',
   mail: 'M4 6h16a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1zM3.5 7l8.5 6 8.5-6',
+  logout: 'M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3M10 17l5-5-5-5M15 12H4',
+  chevron: 'M9 6l6 6-6 6',
 };
 
 export const Icon: FC<{ name: string; size?: number; class?: string }> = ({ name, size = 20, class: cls }) => (
@@ -98,21 +100,22 @@ export const Stat: FC<{ label: string; value: Child; sub?: Child; tone?: 'up' | 
 export function trend(cur: number, prev: number, label: string): { sub: string; tone: 'up' | 'down' | 'flat' } | null {
   if (!label) return null;
   if (!prev && !cur) return { sub: `none ${label} either`, tone: 'flat' };
-  if (!prev) return { sub: `vs 0 ${label}`, tone: 'up' };
+  if (!prev) return { sub: `up from 0 ${label}`, tone: 'up' };
   const diff = cur - prev;
   const p = Math.round((diff / prev) * 100);
   if (diff === 0) return { sub: `same as ${label}`, tone: 'flat' };
-  return { sub: `${Math.abs(p)}% vs ${label}`, tone: diff > 0 ? 'up' : 'down' };
+  return { sub: `${Math.abs(p)}% ${diff > 0 ? 'more than' : 'fewer than'} ${label}`, tone: diff > 0 ? 'up' : 'down' };
 }
 
 export const Chip: FC<{ tone?: 'green' | 'red' | 'muted'; children?: Child; title?: string }> = ({ tone, children, title }) => (
   <span class={`chip ${tone ? `chip--${tone}` : ''}`} title={title}>{children}</span>
 );
 
-export const Empty: FC<{ title: string; children?: Child; action?: Child }> = ({ title, children, action }) => (
+/** `level`: the heading level that fits where it's placed (2 straight under a page title, 3 inside a section). */
+export const Empty: FC<{ title: string; children?: Child; action?: Child; level?: 2 | 3 }> = ({ title, children, action, level = 3 }) => (
   <div class="empty">
     <span class="empty__mark"><Icon name="inbox" size={22} /></span>
-    <h3>{title}</h3>
+    {level === 2 ? <h2 class="empty__title">{title}</h2> : <h3 class="empty__title">{title}</h3>}
     {children && <p class="muted">{children}</p>}
     {action}
   </div>
@@ -154,7 +157,7 @@ export const ColumnChart: FC<{ id: string; title: string; data: { label: string;
             const path = h <= 0 ? '' : `M${x},${y(0)} V${y(0) - h + r} Q${x},${y(0) - h} ${x + r},${y(0) - h} H${x + barW - r} Q${x + barW},${y(0) - h} ${x + barW},${y(0) - h + r} V${y(0)} Z`;
             const showLabel = (i === peak || i === last) && d.value > 0;
             return (
-              <g class="chart__col" tabindex="0" data-tip={`${d.detail}`}>
+              <g class="chart__col" data-tip={`${d.detail}`}>
                 <rect x={padL + band * i} y={padT} width={band} height={plotH} class="chart__hit" />
                 {path && <path d={path} class="chart__bar" />}
                 {showLabel && <text x={cx} y={y(d.value) - 6} class="chart__val" text-anchor="middle">{d.value}</text>}
@@ -163,7 +166,7 @@ export const ColumnChart: FC<{ id: string; title: string; data: { label: string;
             );
           })}
         </svg>
-        <div class="chart__tip" role="status" aria-live="polite" hidden></div>
+        <div class="chart__tip" aria-hidden="true" hidden></div>
       </div>
       <details class="chart__table">
         <summary>Show as table</summary>

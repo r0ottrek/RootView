@@ -7,11 +7,11 @@
 import type { Env } from '../env';
 import { draftReply } from './ai';
 import { all, one, run, scalar, stmt } from './db';
-import { quoted, sendAlert } from './email';
+import { defang, quoted, sendAlert } from './email';
 import { STAR, accessToken, listReviews, putReply, type GoogleReview } from './google';
 import { LATE_GRACE, matchReview, mentionedTechs, type Candidate, type TapLite, type TechLite } from './match';
 import { getSecret, getSettings, saveSettings, type GoogleLocation, type Settings } from './settings';
-import { CALL_TIMES, DAY, HOUR, MINUTE, line, newId, now } from './util';
+import { CALL_TIMES, DAY, HOUR, line, newId, now } from './util';
 
 export interface ReviewRow {
   id: string;
@@ -77,8 +77,11 @@ const insertPoints = (db: D1Database, rows: PointRow[]) =>
 
 // ---------- automatic matching ----------
 
-/** Matches up to `limit` pending reviews to techs. About 6 queries however many reviews. */
-export async function processPending(env: Env, s: Settings, limit = 50, onlyIds?: string[]): Promise<{ processed: number; remaining: number }> {
+/**
+ * Matches up to `limit` pending reviews to techs. About 6 queries however many reviews. Kept small: matching is
+ * the CPU-heavy part, and the free plan allows about 10 ms of CPU per request. The rest wait for the next run.
+ */
+export async function processPending(env: Env, s: Settings, limit = 20, onlyIds?: string[]): Promise<{ processed: number; remaining: number }> {
   const db = env.DB;
   const reviews = onlyIds
     ? await all<ReviewRow>(db, `SELECT * FROM reviews WHERE status = 'pending' AND id IN (SELECT value FROM json_each(?)) ORDER BY posted_at`, JSON.stringify(onlyIds))
@@ -150,8 +153,8 @@ async function alertLowReviews(env: Env, s: Settings, reviews: ReviewRow[], cred
   const sent: string[] = [];
   for (const r of low) {
     const who = credits.filter((c) => c.review_id === r.id).map((c) => names.get(String(c.tech_id))).filter(Boolean).join(', ') || 'not matched yet';
-    const ok = await sendAlert(env, s, `${r.rating}★ ${platformLabel(r.platform)} review from ${line(r.reviewer_name, 60) || 'a customer'}`,
-      `${r.rating} of 5 stars on ${platformLabel(r.platform)}${r.location ? ` (${r.location})` : ''}\nReviewer: ${line(r.reviewer_name, 80) || '(anonymous)'}\nTechnician: ${who}\n\nThe review:\n${quoted(r.body)}\n\nReply or reassign: ${base}/admin/reviews/${r.id}`);
+    const ok = await sendAlert(env, s, `${r.rating}★ ${platformLabel(r.platform)} review from ${defang(line(r.reviewer_name, 60)) || 'a customer'}`,
+      `${r.rating} of 5 stars on ${platformLabel(r.platform)}${r.location ? ` (${r.location})` : ''}\nReviewer: ${defang(line(r.reviewer_name, 80)) || '(anonymous)'}\nTechnician: ${who}\n\nThe review:\n${quoted(r.body)}\n\nReply or reassign: ${base}/admin/reviews/${r.id}`);
     if (ok) sent.push(r.id);
   }
   if (sent.length) await run(env.DB, `UPDATE reviews SET alerted_at = ? WHERE id IN (SELECT value FROM json_each(?))`, now(), JSON.stringify(sent));
@@ -214,21 +217,36 @@ export async function reopenReview(env: Env, reviewId: string): Promise<void> {
 
 // ---------- deleting test entries ----------
 
-/** Removes one tag visit, any points it earned, and any credit a review got from it. */
+/** Removes one tag visit; see deleteTaps. */
 export async function deleteTap(env: Env, tapId: string): Promise<void> {
+  await deleteTaps(env, [tapId]);
+}
+
+/**
+ * Removes tag visits for good: the visits, any points they earned, any credit a review got from them, and the
+ * customer's name from "likely match" hints (those reviews are matched again without them). Two queries however
+ * many visits, so a privacy request stays inside the free plan's per-request limit.
+ */
+export async function deleteTaps(env: Env, tapIds: string[]): Promise<number> {
   const db = env.DB;
-  const tap = await one<{ review_id: string | null; tech_id: string | null }>(db, `SELECT review_id, tech_id FROM taps WHERE id = ?`, tapId);
-  if (!tap) return;
-  const batch = [stmt(db, `DELETE FROM points WHERE tap_id = ?`, tapId)];
-  if (tap.review_id) {
-    batch.push(
-      stmt(db, `DELETE FROM points WHERE review_id = ? AND tech_id IN (SELECT tech_id FROM credits WHERE tap_id = ?)`, tap.review_id, tapId),
-      stmt(db, `DELETE FROM credits WHERE tap_id = ?`, tapId),
-      stmt(db, `UPDATE reviews SET status = CASE WHEN EXISTS (SELECT 1 FROM credits WHERE review_id = ?1) THEN 'credited' ELSE 'unassigned' END WHERE id = ?1 AND status = 'credited'`, tap.review_id),
-    );
-  }
-  batch.push(stmt(db, `DELETE FROM taps WHERE id = ?`, tapId));
-  await db.batch(batch);
+  const ids = JSON.stringify(tapIds);
+  const taps = await all<{ review_id: string | null; customer_name: string | null }>(db,
+    `SELECT review_id, customer_name FROM taps WHERE id IN (SELECT value FROM json_each(?))`, ids);
+  if (!taps.length) return 0;
+  const reviewIds = JSON.stringify([...new Set(taps.flatMap((t) => (t.review_id ? [t.review_id] : [])))]);
+  // Hints quote the name as “Name” inside JSON, so look for exactly that.
+  const names = JSON.stringify([...new Set(taps.flatMap((t) => (t.customer_name ? [`“${JSON.stringify(t.customer_name).slice(1, -1)}”`] : [])))]);
+  await db.batch([
+    stmt(db, `DELETE FROM points WHERE tap_id IN (SELECT value FROM json_each(?))`, ids),
+    stmt(db, `DELETE FROM points WHERE EXISTS (SELECT 1 FROM credits c WHERE c.tap_id IN (SELECT value FROM json_each(?)) AND c.review_id = points.review_id AND c.tech_id = points.tech_id)`, ids),
+    stmt(db, `DELETE FROM credits WHERE tap_id IN (SELECT value FROM json_each(?))`, ids),
+    stmt(db, `UPDATE reviews SET status = CASE WHEN EXISTS (SELECT 1 FROM credits WHERE review_id = reviews.id) THEN 'credited' ELSE 'unassigned' END
+      WHERE id IN (SELECT value FROM json_each(?)) AND status = 'credited'`, reviewIds),
+    stmt(db, `UPDATE reviews SET suggestions = NULL, status = CASE WHEN status = 'unassigned' THEN 'pending' ELSE status END
+      WHERE suggestions IS NOT NULL AND EXISTS (SELECT 1 FROM json_each(?) n WHERE instr(reviews.suggestions, n.value) > 0)`, names),
+    stmt(db, `DELETE FROM taps WHERE id IN (SELECT value FROM json_each(?))`, ids),
+  ]);
+  return taps.length;
 }
 
 /** Removes a review entered by hand (Google reviews come back on the next import, so they aren't deletable). */
@@ -311,11 +329,16 @@ async function importGoogleBatch(db: D1Database, s: Settings, loc: GoogleLocatio
     JSON.stringify(rows), t);
 }
 
-export async function syncGoogle(env: Env, opts: { full?: boolean } = {}): Promise<{ ok: boolean; note: string }> {
+export async function syncGoogle(env: Env, opts: { full?: boolean; defer?: (p: Promise<unknown>) => void } = {}): Promise<{ ok: boolean; note: string }> {
   const db = env.DB;
   const s = await getSettings(db);
-  const refresh = await getSecret(env, 'google_refresh');
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET) return { ok: false, note: 'Google keys are not set on the server yet.' };
+  let refresh: string | null;
+  try {
+    refresh = await getSecret(env, 'google_refresh');
+  } catch {
+    return { ok: false, note: "The saved Google connection can't be read (was ENCRYPTION_KEY changed?). Connect Google again in Settings." };
+  }
   if (!refresh) return { ok: false, note: 'Google is not connected.' };
   if (!s.google_locations.length) return { ok: false, note: 'Choose which Google profiles to track.' };
 
@@ -356,7 +379,9 @@ export async function syncGoogle(env: Env, opts: { full?: boolean } = {}): Promi
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    await saveSettings(db, { google_last_sync_error: msg, google_backfill: {} });
+    // A hiccup (rate limit, outage) keeps the history import's place; only a rejected page token starts it over.
+    const badToken = /\b400\b|INVALID_ARGUMENT|page ?token/i.test(msg);
+    await saveSettings(db, { google_last_sync_error: msg, google_backfill: badToken ? {} : backfill });
     return { ok: false, note: msg };
   }
 
@@ -365,7 +390,9 @@ export async function syncGoogle(env: Env, opts: { full?: boolean } = {}): Promi
   const note = `${added} new review${added === 1 ? '' : 's'}.${pendingHistory}`;
   await saveSettings(db, { google_last_sync_at: started, google_last_sync_error: null, google_last_sync_note: note, google_totals: totals, google_backfill: backfill });
   await processPending(env, { ...s, google_totals: totals });
-  await autoDraft(env, s);
+  // AI drafts can take a while: a person waiting on the page gets the answer first (`defer`), the scheduler waits.
+  if (opts.defer) opts.defer(autoDraft(env, s));
+  else await autoDraft(env, s);
   return { ok: true, note };
 }
 
@@ -392,12 +419,14 @@ async function autoDraft(env: Env, s: Settings): Promise<void> {
   if (!s.ai_auto_draft || !env.ANTHROPIC_API_KEY) return;
   const todo = await all<{ id: string }>(env.DB,
     `SELECT id FROM reviews WHERE platform = 'google' AND reply IS NULL AND reply_draft IS NULL AND status IN ('credited', 'unassigned')
-     AND posted_at > ? ORDER BY posted_at DESC LIMIT 2`, now() - 30 * DAY);
+     AND reply_error IS NULL AND posted_at > ? ORDER BY posted_at DESC LIMIT 2`, now() - 30 * DAY);
   for (const r of todo) {
     try {
       await draftFor(env, s, r.id);
     } catch (err) {
       console.error('[draft]', err);
+      // Marked, so one review that always fails doesn't block drafts for the others. "Draft a reply" still works.
+      await run(env.DB, `UPDATE reviews SET reply_error = ? WHERE id = ?`, `Automatic draft failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300), r.id);
     }
   }
 }
@@ -427,32 +456,36 @@ export async function saveReply(env: Env, reviewId: string, text: string, post: 
 
 export async function alertLowTap(env: Env, s: Settings, tech: { name: string; first_name: string }, tap: { customer_name: string; rating: number; comment: string | null }): Promise<void> {
   const base = s.public_base_url.replace(/\/+$/, '');
-  const who = line(tap.customer_name, 60);
+  const who = defang(line(tap.customer_name, 60));
   await sendAlert(env, s, `${tap.rating}★ from ${who} on ${tech.first_name}'s tag`,
     `${who} rated their visit with ${tech.name} ${tap.rating} of 5 on the review page.\n\nTheir comment:\n${quoted(tap.comment)}\n\nThey were offered a call-back (you'll get a second email if they ask for one), with the review site links below it.\n\nFollow up: ${base}/admin/activity?f=low`);
 }
 
 export async function alertCallback(env: Env, s: Settings, tech: { name: string; first_name: string }, cb: { customer_name: string; rating: number; comment: string | null; phone: string; time: string }): Promise<void> {
   const base = s.public_base_url.replace(/\/+$/, '');
-  const who = line(cb.customer_name, 60);
+  const who = defang(line(cb.customer_name, 60));
   await sendAlert(env, s, `Call back ${who}: ${cb.phone} (${cb.rating}★ for ${tech.first_name})`,
-    `${who} asked for a call ${CALL_TIMES[cb.time] ?? 'soon'}.\n\nPhone: ${cb.phone}${cb.phone.startsWith('+') ? ' (international number: check it before calling)' : ''}\nRating: ${cb.rating} of 5 for ${tech.name}\n\nWhat went wrong:\n${quoted(cb.comment)}\n\nLog the call when it's done: ${base}/admin/activity?f=low`);
+    `${who} asked for a call ${CALL_TIMES[cb.time] ?? 'soon'}.\n\nPhone: ${cb.phone}${cb.phone.startsWith('+') ? ' (international number: check it before calling)' : ''}\nRating: ${cb.rating} of 5 for ${tech.name}\n\nWhat went wrong:\n${quoted(cb.comment)}\n\nLog the call when it's done: ${base}/admin/activity?f=low`, 'callback');
 }
 
 /**
  * Scheduled run (every 15 minutes via cron/index.js → POST /api/cron): Google import and matching, plus housekeeping.
  * Personal data is kept only as long as it's useful: rough locations 30 days, call-back numbers 90 days after the
- * follow-up is closed, visits nobody finished 30 days.
+ * follow-up is closed (180 days at most, closed or not), visits nobody finished 30 days.
  */
 export async function runScheduled(env: Env): Promise<{ ok: boolean; note: string }> {
   const t = now();
-  await env.DB.batch([
+  // Clean-up once a day (the run that starts between 08:00 and 08:15 UTC): it reads a lot of rows, and D1's free
+  // plan counts rows read.
+  const daily = new Date(t).getUTCHours() === 8 && new Date(t).getUTCMinutes() < 15;
+  if (daily) await env.DB.batch([
     stmt(env.DB, `DELETE FROM sessions WHERE expires_at < ?`, t),
-    stmt(env.DB, `DELETE FROM throttle WHERE window_start < ?`, t - 2 * DAY),
+    stmt(env.DB, `DELETE FROM throttle WHERE window_start < ? AND key NOT LIKE 'ok:%'`, t - 2 * DAY),
+    stmt(env.DB, `DELETE FROM throttle WHERE window_start < ?`, t - 60 * DAY),
     stmt(env.DB, `UPDATE techs SET invite_hash = NULL, invite_expires_at = NULL WHERE invite_expires_at < ?`, t),
     stmt(env.DB, `UPDATE admins SET invite_hash = NULL, invite_expires_at = NULL WHERE invite_expires_at < ?`, t),
     stmt(env.DB, `UPDATE taps SET geo = NULL WHERE geo IS NOT NULL AND created_at < ?`, t - 30 * DAY),
-    stmt(env.DB, `UPDATE taps SET callback_phone = NULL WHERE callback_phone IS NOT NULL AND resolved_at IS NOT NULL AND resolved_at < ?`, t - 90 * DAY),
+    stmt(env.DB, `UPDATE taps SET callback_phone = NULL WHERE callback_phone IS NOT NULL AND ((resolved_at IS NOT NULL AND resolved_at < ?) OR callback_at < ?)`, t - 90 * DAY, t - 180 * DAY),
     stmt(env.DB, `DELETE FROM taps WHERE rating IS NULL AND review_id IS NULL AND created_at < ?`, t - 30 * DAY),
   ]);
   // Low Google reviews whose alert email didn't go out (email cap, outage): try again for 3 days.
@@ -460,7 +493,10 @@ export async function runScheduled(env: Env): Promise<{ ok: boolean; note: strin
   const missed = await all<ReviewRow>(env.DB,
     `SELECT * FROM reviews WHERE alerted_at IS NULL AND status NOT IN ('pending', 'history') AND rating IS NOT NULL AND rating <= ? AND posted_at > ? LIMIT 5`,
     s.alert_threshold, t - 3 * DAY);
-  if (missed.length) await alertLowReviews(env, s, missed, [], []);
+  if (missed.length) {
+    const credited = await all<Record<string, unknown>>(env.DB, `SELECT review_id, tech_id FROM credits WHERE review_id IN (SELECT value FROM json_each(?))`, JSON.stringify(missed.map((r) => r.id)));
+    await alertLowReviews(env, s, missed, credited, await all<TechLite>(env.DB, `SELECT id, name, first_name, aliases, active FROM techs`));
+  }
   const res = await syncGoogle(env);
   if (!res.ok) {
     // Still match manual entries and anything left over.

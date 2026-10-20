@@ -24,3 +24,7 @@ export async function scalar(db: D1Database, sql: string, ...params: unknown[]):
   const v = Object.values(row)[0];
   return typeof v === 'number' ? v : Number(v ?? 0) || 0;
 }
+
+/** Every techs column but the photo itself (up to ~200 KB): `photo` comes back as 1 or 0, which is all most pages need. */
+export const TECH_COLS = `id, slug, name, first_name, role, aliases, email, phone, photo IS NOT NULL AS photo, active, sort, password_hash,
+  invite_hash, invite_expires_at, home_location, today_location, today_on, created_at, updated_at`;

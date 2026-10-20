@@ -18,7 +18,8 @@ export const methodLabel = (m: string) => METHOD[m] ?? m;
 export const creditReason = (cr: Pick<CreditView, 'method' | 'evidence'>) =>
   cr.method === 'manual' ? (cr.evidence ?? methodLabel('manual')) : `${methodLabel(cr.method)}${cr.evidence ? `: ${cr.evidence}` : ''}`;
 
-export const ReviewCard: FC<{ r: ReviewRow; credits?: CreditView[]; tz: string; href?: string; children?: Child; clamp?: boolean }> = ({ r, credits, tz, href, children, clamp }) => (
+/** `reasons={false}` leaves out why each tech was credited (the tech app: it can quote another tech's customer). */
+export const ReviewCard: FC<{ r: ReviewRow; credits?: CreditView[]; tz: string; href?: string; children?: Child; clamp?: boolean; reasons?: boolean }> = ({ r, credits, tz, href, children, clamp, reasons = true }) => (
   <article class="rev">
     <header class="rev__head">
       <Stars rating={r.rating} />
@@ -30,7 +31,7 @@ export const ReviewCard: FC<{ r: ReviewRow; credits?: CreditView[]; tz: string; 
     {r.body ? <p class={`rev__body ${clamp ? 'line-clamp' : ''}`}>{r.body}</p> : <p class="dim small">Star rating only, no written review.</p>}
     {credits && credits.length > 0 && (
       <div class="rev__credits">
-        {credits.map((cr) => <Chip tone="green" title={creditReason(cr)}>{cr.first_name}</Chip>)}
+        {credits.map((cr) => <Chip tone="green" title={reasons ? creditReason(cr) : undefined}>{cr.first_name}</Chip>)}
       </div>
     )}
     {r.reply && (

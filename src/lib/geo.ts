@@ -67,12 +67,14 @@ const STATE_PART = new RegExp(`^([a-z]{2}|${STATE_NAMES.join('|')})$`, 'i');
 export function parseAreas(text: string): string[] {
   const out: string[] = [];
   for (const line of text.split(/[\r\n;]+/)) {
-    for (const raw of line.split(',')) {
-      const part = raw.trim();
-      if (!part) continue;
-      if (STATE_PART.test(part) && out.length) continue; // the ", CA" of the previous city
-      out.push(part.slice(0, 60));
-    }
+    const parts = line.split(',').map((p) => p.trim()).filter(Boolean);
+    parts.forEach((part, i) => {
+      // The ", IL" or ", Texas, USA" after a city. A state name with another place after it is a city itself
+      // ("Riverside, Ontario, Upland").
+      const next = parts[i + 1];
+      const region = i > 0 && STATE_PART.test(part) && (part.length === 2 || !next || STATE_PART.test(next));
+      if (!region) out.push(part.slice(0, 60));
+    });
   }
   const seen = new Set<string>();
   return out.filter((a) => {

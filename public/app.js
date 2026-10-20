@@ -4,32 +4,56 @@
   document.documentElement.classList.add('js');
   var $$ =function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
 
+  // Screen-reader announcements (the empty status line every page has)
+  var live = document.getElementById('live');
+  var announce = function (msg) { if (!live) return; live.textContent = ''; setTimeout(function () { live.textContent = msg; }, 50); };
+
+  // After a redirect with a message, move focus to it so it's read out and seen first.
+  var flash = document.querySelector('[data-flash]');
+  if (flash) flash.focus({ preventScroll: false });
+
   // Copy buttons
   $$('[data-copy]').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var text = btn.getAttribute('data-copy');
-      var done = function () {
-        var label = btn.innerHTML;
-        btn.textContent = 'Copied';
+      var label = btn.innerHTML;
+      var result = function (ok) {
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        announce(ok ? 'Copied to the clipboard.' : "Couldn't copy. Select the text and copy it by hand.");
         setTimeout(function () { btn.innerHTML = label; }, 1400);
       };
-      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(done, function () { fallbackCopy(text); done(); });
-      else { fallbackCopy(text); done(); }
+      if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { result(true); }, function () { result(fallbackCopy(text)); });
+      else result(fallbackCopy(text));
     });
   });
   function fallbackCopy(text) {
-    var ta = document.createElement('textarea');
+    var ta = document.createElement('textarea'), ok = false;
     ta.value = text; ta.setAttribute('readonly', ''); ta.style.position = 'fixed'; ta.style.opacity = '0';
     document.body.appendChild(ta); ta.select();
-    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+    try { ok = document.execCommand('copy'); } catch (e) { /* ignore */ }
     document.body.removeChild(ta);
+    return ok;
   }
 
-  // Confirm before destructive actions
-  $$('form[data-confirm]').forEach(function (form) {
+  // Confirm before destructive actions (on the form, or on the one button that was pressed)
+  $$('form').forEach(function (form) {
     form.addEventListener('submit', function (e) {
-      if (!window.confirm(form.getAttribute('data-confirm'))) e.preventDefault();
+      var msg = (e.submitter && e.submitter.getAttribute('data-confirm')) || form.getAttribute('data-confirm');
+      if (msg && !window.confirm(msg)) e.preventDefault();
     });
+  });
+
+  // Tie each field's hint and error text to its input, so screen readers read them with the field.
+  $$('.field').forEach(function (field) {
+    var input = field.querySelector('input:not([type="hidden"]), select, textarea');
+    if (!input) return;
+    var ids = (input.getAttribute('aria-describedby') || '').split(/\s+/).filter(Boolean);
+    $$('.hint, .error', field).forEach(function (p, i) {
+      if (!p.id) p.id = (input.id || input.name || 'f') + '-note-' + i;
+      if (ids.indexOf(p.id) < 0) ids.push(p.id);
+      if (p.classList.contains('error')) input.setAttribute('aria-invalid', 'true');
+    });
+    if (ids.length) input.setAttribute('aria-describedby', ids.join(' '));
   });
 
   // Busy state for slow actions (AI drafts, Google sync)
@@ -70,11 +94,6 @@
   // Time zone on first-run setup
   $$('[data-tz]').forEach(function (el) {
     try { el.value = Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { /* ignore */ }
-  });
-
-  // Auto-submit filters
-  $$('select[data-autosubmit]').forEach(function (sel) {
-    sel.addEventListener('change', function () { sel.form.submit(); });
   });
 
   // Print
@@ -140,18 +159,30 @@
     var hide = function () { tip.hidden = true; };
     $$('.chart__col', chart).forEach(function (col) {
       col.addEventListener('mouseenter', function () { show(col); });
-      col.addEventListener('focus', function () { show(col); });
       col.addEventListener('mouseleave', hide);
-      col.addEventListener('blur', hide);
     });
+    document.addEventListener('keydown', function (e) { if (e.key === 'Escape') hide(); });
   });
 
   // "Who helped you today?": search box with a dropdown of names (ARIA combobox + listbox)
   $$('[data-combo]').forEach(function (form) {
-    var input = form.querySelector('[role="combobox"]');
-    var list = form.querySelector('[role="listbox"]');
+    var input = form.querySelector('[data-combo-input]');
+    var list = form.querySelector('[data-combo-list]');
     var status = form.querySelector('[data-combo-status]');
     var empty = list.querySelector('.combo__empty');
+    input.setAttribute('role', 'combobox');
+    input.setAttribute('aria-autocomplete', 'list');
+    input.setAttribute('aria-controls', list.id);
+    input.setAttribute('aria-expanded', list.hidden ? 'false' : 'true');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('aria-label', 'Technicians');
+    empty.setAttribute('role', 'presentation');
+    $$('[data-combo-option]', list).forEach(function (o) {
+      o.setAttribute('role', 'option');
+      o.setAttribute('aria-selected', 'false');
+      var a = o.querySelector('a');
+      if (a) a.tabIndex = -1;
+    });
     var options = $$('[role="option"]', list);
     var active = -1;
     // In on-screen order (filter() re-sorts the list so the best matches come first).
@@ -246,6 +277,10 @@
     document.addEventListener('click', function (e) {
       if (!form.contains(e.target)) setOpen(false);
     });
+    // Tabbing away closes the list too.
+    form.addEventListener('focusout', function (e) {
+      if (e.relatedTarget && !form.contains(e.relatedTarget)) setOpen(false);
+    });
 
     // Same rules as matchName() in src/lib/util.ts.
     function norm(s) { return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
@@ -306,7 +341,7 @@
       if (!list.length) {
         var ok = document.createElement('p');
         ok.className = 'small pos';
-        ok.textContent = '✓ These colors pass the readability check.';
+        ok.textContent = 'These colors pass the readability check.';
         warnBox.appendChild(ok);
         return;
       }
@@ -315,7 +350,7 @@
       list.forEach(function (w) {
         var li = document.createElement('li');
         li.className = 'small';
-        li.textContent = '⚠ ' + w;
+        li.textContent = w;
         ul.appendChild(li);
       });
       warnBox.appendChild(ul);

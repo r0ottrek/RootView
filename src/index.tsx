@@ -135,9 +135,9 @@ app.onError((err, c) => {
   // Invite paths carry a one-time token: keep it out of logs.
   console.error('[error]', c.req.method, c.req.path.replace(/\/invite\/.*/, '/invite/[redacted]'), err);
   return c.html(
-    `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong</title>
-     <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/theme.css"><body class="pub"><main class="pub__main"><section class="pub__card"><h1>Something went wrong</h1>
-     <p class="muted">Please try again in a moment.</p><a class="btn btn--ghost" href="/">Start over</a></section></main></body>`,
+    `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Something went wrong</title>
+     <link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/theme.css"><body class="pub"><main id="main" class="pub__main"><section class="pub__card"><h1>Something went wrong</h1>
+     <p class="muted">Please try again in a moment.</p><a class="btn btn--ghost" href="/">Start over</a></section></main></body></html>`,
     500,
   );
 });

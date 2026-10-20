@@ -36,6 +36,34 @@ It's built for plumbers, electricians, HVAC, cleaners, locksmiths, landscapers, 
 
 ---
 
+## Two ways to set it up
+
+### Option A: let Claude Code do it
+
+This repo includes a [`CLAUDE.md`](CLAUDE.md), a step-by-step setup playbook for [Claude Code](https://claude.com/claude-code), Anthropic's coding assistant for the terminal. Claude Code reads that file automatically when you open the folder.
+
+```bash
+git clone https://github.com/r0ottrek/RootView.git rootview
+cd rootview
+claude
+```
+
+Then say **"Set up RootView for me."** Claude asks whether you want a local demo or a live site, checks your computer, starts the preview, and, once you say yes, creates the Cloudflare database and project, sets the secrets and deploys.
+
+A few things stay with you:
+
+- You sign in to Cloudflare in your browser.
+- You create your own owner login on `/setup`.
+- You type any API keys from Google, Resend or Anthropic into your own terminal.
+
+Secrets are generated on your computer and saved in a git-ignored `.prod-secrets` file; they're never shown in the chat.
+
+### Option B: do it yourself
+
+Follow the guide below. [Try it on your computer](#try-it-on-your-computer-5-minutes) takes about 5 minutes. [Deploy to Cloudflare](#deploy-to-cloudflare-free-plan) takes about 15, plus [first steps in the app](#first-steps-in-the-app). No step needs more than copy and paste.
+
+---
+
 ## Try it on your computer (5 minutes)
 
 You need [Node.js](https://nodejs.org) 22.13 or newer.
@@ -53,7 +81,7 @@ Open `.dev.vars` and fill in `SETUP_KEY`, `CRON_SECRET` and `DEMO_ADMIN_PASSWORD
 node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"
 ```
 
-Then start the preview with made-up demo data, for a company called "Brightwater Plumbing & Air":
+Then start the preview with made-up demo data (the demo company is also called "RootView"):
 
 ```bash
 npm run dev:demo
@@ -73,7 +101,9 @@ To start empty instead, run `npm run dev -- --reset` and open http://localhost:8
 
 ## Deploy to Cloudflare (free plan)
 
-You need a free [Cloudflare account](https://dash.cloudflare.com/sign-up). All of this runs from the project folder.
+You need a free [Cloudflare account](https://dash.cloudflare.com/sign-up). All of this runs from the project folder. If you skipped the local preview, run the `git clone`, `cd` and `npm install` lines from [Try it on your computer](#try-it-on-your-computer-5-minutes) first.
+
+The steps use the name `rootview`. To use another name, change `"name"` and `"database_name"` in `wrangler.jsonc` now, and use your name wherever `rootview` appears below.
 
 **1. Sign in and create the database**
 
@@ -82,7 +112,7 @@ npx wrangler login
 npx wrangler d1 create rootview
 ```
 
-Copy the `database_id` it prints into `wrangler.jsonc`, replacing `00000000-0000-0000-0000-000000000000`. You can rename the project there too (`"name"`).
+If it asks whether to add the database to your config, answer **No**. Copy the `database_id` it prints into `wrangler.jsonc`, replacing `00000000-0000-0000-0000-000000000000`. Keep `"binding": "DB"` as it is.
 
 **2. Create the tables**
 
@@ -94,18 +124,34 @@ npm run db:migrate:remote
 
 ```bash
 npx wrangler pages project create rootview --production-branch main
-npx wrangler pages secret put SETUP_KEY
-npx wrangler pages secret put CRON_SECRET
-npx wrangler pages secret put ENCRYPTION_KEY
 ```
 
-Each command asks for a value; paste a fresh random string for each. `ENCRYPTION_KEY` must be exactly 32 bytes, base64. Make one with:
+It prints your site's address, normally `https://rootview.pages.dev` (Cloudflare adds a suffix if that name is taken). Note it down; `npx wrangler pages project list` shows it again.
+
+The app needs three secrets. This makes them and saves them in `.prod-secrets` in the project folder. Git ignores that file, so it's never uploaded:
 
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+node scripts/secrets.mjs
 ```
 
-Keep a copy of `ENCRYPTION_KEY` somewhere safe. Without it, the stored Google connection and two-step sign-in keys can't be read.
+Then send each one to Cloudflare. Nothing is shown on screen:
+
+```bash
+node scripts/secrets.mjs --get SETUP_KEY | npx wrangler pages secret put SETUP_KEY
+node scripts/secrets.mjs --get CRON_SECRET | npx wrangler pages secret put CRON_SECRET
+node scripts/secrets.mjs --get ENCRYPTION_KEY | npx wrangler pages secret put ENCRYPTION_KEY
+```
+
+Save a copy of `.prod-secrets` in your password manager. Without `ENCRYPTION_KEY`, the stored Google connection and two-step sign-in keys can't be read.
+
+<details>
+<summary>Prefer to make your own values?</summary>
+
+Run `npx wrangler pages secret put SETUP_KEY` (and the same for `CRON_SECRET` and `ENCRYPTION_KEY`). Each one asks for a value:
+
+- `SETUP_KEY` and `CRON_SECRET`: any random string of 16 or more characters.
+- `ENCRYPTION_KEY`: exactly 32 bytes, base64. Make it with `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`.
+</details>
 
 **4. Deploy**
 
@@ -113,34 +159,43 @@ Keep a copy of `ENCRYPTION_KEY` somewhere safe. Without it, the stored Google co
 npm run deploy
 ```
 
-It prints your address, normally `https://rootview.pages.dev`.
+It also prints a one-off link like `https://1a2b3c4d.rootview.pages.dev`. That link stays on this exact version forever, so don't use it for the steps below: use the address from step 3.
 
 **5. Create your owner account**
 
-Open `https://<your address>/setup`, enter the `SETUP_KEY`, and create the owner login. Setup closes for good once an owner exists.
+Open `https://<your address>/setup` and paste the `SETUP_KEY` from `.prod-secrets`. Then create the owner login. Setup closes for good once an owner exists.
 
 **6. Turn on the 15-minute scheduler**
 
 The scheduler imports Google reviews, retries missed alerts and clears out old data. Put your address in `cron/wrangler.jsonc` (`APP_URL`), then:
 
 ```bash
-npx wrangler secret put CRON_SECRET --config cron/wrangler.jsonc
 npm run deploy:cron
+node scripts/secrets.mjs --get CRON_SECRET | npx wrangler secret put CRON_SECRET --config cron/wrangler.jsonc
 ```
 
-Use the same `CRON_SECRET` value as in step 3.
+The scheduler and the site must share the same `CRON_SECRET`, which this does.
 
 **7. (Optional) Use your own domain**
 
-Go to Cloudflare dashboard → Workers & Pages → your project → Custom domains → add, for example, `reviews.yourcompany.com`. If your DNS is somewhere else, add the one CNAME record Cloudflare shows you. Then set **Settings → Address written on tags** to that address **before** you write any NFC tags.
+Go to Cloudflare dashboard → Workers & Pages → your project → Custom domains → add, for example, `reviews.yourcompany.com`. If your DNS is somewhere else, add the one CNAME record Cloudflare shows you. Then set **Settings → Address written on tags** to that address **before** you write any NFC tags. If you use Google Business Profile, also add `https://reviews.yourcompany.com/admin/google/callback` as an authorized redirect URI in Google Cloud.
 
-**Updating later:** pull the new code, then run `npm run db:migrate:remote` and `npm run deploy`.
+**Updating later:** first commit your own changes to `wrangler.jsonc` and `cron/wrangler.jsonc` (`git commit -am "my deploy settings"`) so `git pull` can merge. Then:
+
+```bash
+git pull
+npm install
+npm run db:migrate:remote
+npm run deploy
+```
+
+Run `npm run deploy:cron` too if anything in `cron/` changed.
 
 ---
 
 ## First steps in the app
 
-The dashboard shows a "Getting started" checklist until these are done:
+Owners see a "Finish setting up" checklist on the dashboard. Work through these:
 
 1. **Branding:** your business name, logo, app icon and colors.
 2. **Settings → Review sites:** your Google review link. In Google Business Profile, "Ask for reviews" gives you this link. Yelp, BBB and Facebook are optional.
@@ -155,7 +210,7 @@ The dashboard shows a "Getting started" checklist until these are done:
 
 ## Branding and themes
 
-Everything is under **Admin → Branding** (owners only):
+Everything is under **Admin → Branding** (anyone in the office can look; only owners can change it):
 
 - **Business details:** name, office phone (customers can tap to call it), website and privacy policy link.
 - **Logo:** any PNG, JPEG, WebP or SVG. It's resized in your browser and shown in page headers, on printed cards and in the tech app.
@@ -174,7 +229,7 @@ The preview updates as you change things, and a readability check warns when tex
 <details>
 <summary>For developers: how theming works</summary>
 
-The owner's choices are stored as one validated object (`src/lib/theme.ts`). Only `#rrggbb` colors and values from fixed lists are accepted. The server turns it into about 40 CSS custom properties: hover tints, borders, readable text colors on buttons, and so on. It serves them as `/theme.css`, versioned by a hash so browsers fetch a new copy only when the theme changes. `public/styles.css` uses only those tokens, never raw colors.
+The owner's choices are stored as one validated object (`src/lib/theme.ts`). Only `#rrggbb` colors and values from fixed lists are accepted. The server turns it into about 40 CSS custom properties: hover tints, borders, readable text colors on buttons, and so on. It serves them as `/theme.css`, versioned by a hash so browsers fetch a new copy only when the theme changes. `public/styles.css` uses only those tokens, apart from white QR-code backgrounds, print styles and shadows.
 
 To add a preset, add an entry to `PRESETS` in `src/lib/theme.ts`. The tests check that every preset passes the readability check.
 
@@ -219,7 +274,7 @@ Without this, Google reviews can be added by hand. With it, they come in every 1
    - Google My Business API
 3. **OAuth consent screen:** choose **Internal** if you use Google Workspace. Otherwise choose **External** and **publish** the app; apps left in "Testing" lose access after 7 days.
 4. **Credentials → Create OAuth client → Web application.** Authorized redirect URI: `https://<your address>/admin/google/callback`
-5. Save the client ID and client secret:
+5. Save the client ID and client secret (each command asks for the value), then redeploy so the site picks them up:
    ```bash
    npx wrangler pages secret put GOOGLE_CLIENT_ID
    npx wrangler pages secret put GOOGLE_CLIENT_SECRET
@@ -234,9 +289,10 @@ Only profiles that the connected Google login manages can be imported. To add on
 Low ratings, call-back requests and reward requests can be emailed to the office through [Resend](https://resend.com):
 
 1. Verify your sending domain with Resend.
-2. Set the secret:
+2. Set the secret, then redeploy:
    ```bash
    npx wrangler pages secret put RESEND_API_KEY
+   npm run deploy
    ```
 3. In the app, fill in **Settings → Alerts**.
 
@@ -244,7 +300,14 @@ Without this, alerts still show in the dashboard.
 
 ## AI reply drafts (optional)
 
-Set `ANTHROPIC_API_KEY`, and the dashboard can draft replies to Google reviews. Someone always reads a draft before it posts. `AI_MODEL` overrides the default model. Drafting is limited to 30 per hour per office user.
+Get an API key at [console.anthropic.com](https://console.anthropic.com), then:
+
+```bash
+npx wrangler pages secret put ANTHROPIC_API_KEY
+npm run deploy
+```
+
+The dashboard can then draft replies to Google reviews. Someone always reads a draft before it posts. `AI_MODEL` overrides the default model. Drafting is limited to 30 per hour per office user.
 
 ## NFC tags
 
@@ -281,23 +344,29 @@ Details, and how to report a vulnerability: [SECURITY.md](SECURITY.md).
 node scripts/owner-reset-link.mjs you@example.com https://reviews.example.com
 ```
 
-It prints a one-time reset link, plus the single `wrangler` command that activates it with your Cloudflare login.
+It prints a one-time reset link, plus the single `wrangler` command that activates it with your Cloudflare login. Run that command from the project folder.
+
+**Removing an owner:** owners can't be removed in the app, so nobody can lock the others out. Make them a manager first, from the project folder, then remove them under **Settings → Office logins**:
+
+```bash
+npx wrangler d1 execute DB --remote --command "UPDATE admins SET role='manager' WHERE email='old-owner@example.com'"
+```
 
 ## Privacy
 
-Customers see a short notice on the rating page saying what's collected and why. What's kept is limited:
+Customers see a short notice on the rating page saying what's collected and why. Some of it is cleared automatically:
 
-- a customer's rough area for 30 days;
-- a call-back number for 90 days after the follow-up closes;
-- unfinished visits for 30 days.
+- a customer's rough area after 30 days;
+- a call-back number 90 days after the follow-up closes (180 days at most);
+- unfinished visits after 30 days.
 
-Owners can find and delete a customer's data on request (Settings → Privacy). Set your own privacy policy link under Branding.
+The name, rating and comment stay with the visit, because they're the record of who helped whom. Owners can find and delete a customer's data on request (Settings → Privacy). Set your own privacy policy link under Branding.
 
 ## Limits on the free plan
 
 Cloudflare's free plan allows 100,000 requests a day and 5 GB of D1 storage. That's far more than a 50-tech company needs.
 
-Each request may use at most 10 ms of CPU time, which is why password hashing defaults to 20,000 PBKDF2 rounds. On Workers Paid, set `PASSWORD_ITERATIONS=100000` (the most Cloudflare's Web Crypto allows). Existing passwords are upgraded the next time each person signs in.
+Each request may use at most 10 ms of CPU time, which is why password hashing defaults to 20,000 PBKDF2 rounds and reviews are matched a few at a time. On Workers Paid, run `npx wrangler pages secret put PASSWORD_ITERATIONS`, enter `100000` (the most Cloudflare's Web Crypto allows), then `npm run deploy`. Existing passwords are upgraded the next time each person signs in.
 
 ---
 
@@ -308,7 +377,7 @@ npm run dev           # local preview at http://localhost:8787 (keeps data betwe
 npm run dev:demo      # same, with fresh demo data
 npm test              # unit tests + an end-to-end run through the real app
 npm run check         # TypeScript
-npm run preview:dist  # build exactly what's deployed, and run it locally
+npm run preview:dist  # build exactly what's deployed and run it locally (replaces local data with demo data)
 ```
 
 | Folder | What's in it |
@@ -320,9 +389,9 @@ npm run preview:dist  # build exactly what's deployed, and run it locally
 | `public/` | `styles.css` (token-based), `app.js` (progressive enhancement only), fonts, default icons |
 | `migrations/` | D1 schema |
 | `cron/` | The 15-minute scheduler Worker |
-| `scripts/` | Local preview, demo data, Pages build, owner reset |
+| `scripts/` | Local preview, demo data, Pages build, production secrets, owner reset |
 
-Stack: [Hono](https://hono.dev), server-rendered JSX, Cloudflare Pages and D1, and TypeScript. Every page works without JavaScript.
+Stack: [Hono](https://hono.dev), server-rendered JSX, Cloudflare Pages and D1, and TypeScript. Every page works without JavaScript, except image uploads (images are resized in the browser first).
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -339,4 +408,4 @@ Ratings on a tag earn 0 points by default, and staff phones signed in to the app
 
 ## License
 
-[MIT](LICENSE). Bundled fonts: Manrope and Cinzel, under the SIL Open Font License (`public/fonts/OFL-*.txt`).
+[MIT](LICENSE). Bundled fonts: IBM Plex Sans and Cinzel, under the SIL Open Font License (`public/fonts/OFL-*.txt`).

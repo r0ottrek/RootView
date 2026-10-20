@@ -12,7 +12,7 @@ import type { Child } from 'hono/jsx';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AppEnv, Tech } from '../env';
 import { clientKey, overLimit } from '../lib/auth';
-import { all, one, run } from '../lib/db';
+import { TECH_COLS, all, one, run, scalar } from '../lib/db';
 import { dayKey, describeGeo, geoFrom, pickLocation } from '../lib/geo';
 import { alertCallback, alertLowTap } from '../lib/reviews';
 import { companyName, enabledSites, googleUrlFor, type Settings } from '../lib/settings';
@@ -45,7 +45,7 @@ const firstWord = (name: string | null) => (name ?? '').trim().split(/\s+/)[0] |
 const maskPhone = (p: string | null | undefined) => (p ? p.replace(/\d(?=(?:\D*\d){2})/g, '*') : '');
 
 async function activeTech(db: D1Database, slug: string): Promise<Tech | null> {
-  return one<Tech>(db, `SELECT * FROM techs WHERE slug = ? AND active = 1`, slug.toLowerCase());
+  return one<Tech>(db, `SELECT ${TECH_COLS} FROM techs WHERE slug = ? AND active = 1`, slug.toLowerCase());
 }
 
 /** The tap this browser created (cookie "<techId>.<tapId>.<time>"), so a shared or old link can't open someone else's page. */
@@ -69,6 +69,8 @@ pub.get('/', async (c) => {
   const q = str(c.req.query('q'), 60);
   const switched = c.req.query('switched') === '1';
   const techs = await all<Tech>(c.env.DB, `SELECT id, slug, name, first_name, role, photo IS NOT NULL AS photo, updated_at FROM techs WHERE active = 1 ORDER BY sort, name`);
+  // A brand-new site: send whoever opened it to create the owner login.
+  if (!techs.length && !(await scalar(c.env.DB, `SELECT COUNT(*) FROM admins`))) return c.redirect('/setup', 303);
   const matches = new Map(techs.flatMap((t) => { const m = matchName(t.name, q); return m ? [[t.id, m] as const] : []; }));
   const order = q ? [...techs].sort((a, b) => (matches.get(b.id)?.score ?? -1) - (matches.get(a.id)?.score ?? -1)) : techs;
   const shown = q ? matches.size : 0;
@@ -86,16 +88,16 @@ pub.get('/', async (c) => {
             <Icon name="search" />
             <input id="tech-q" name="q" type="search" value={q} placeholder="Start typing a name" maxlength={60} autofocus={switched}
               autocomplete="off" autocapitalize="words" spellcheck={false} enterkeyhint="search"
-              role="combobox" aria-autocomplete="list" aria-controls="tech-options" aria-expanded={q ? 'true' : 'false'} aria-describedby="tech-hint" />
+              aria-describedby="tech-hint" data-combo-input />
             <button type="submit" class="btn btn--ghost btn--sm no-js-only">Find</button>
           </div>
           <p class="hint" id="tech-hint">Tap the box to see everyone, or type a few letters.</p>
-          <ul id="tech-options" class="combo__list" role="listbox" aria-label="Technicians" hidden={!q}>
+          <ul id="tech-options" class="combo__list" role="list" aria-label="Technicians" hidden={!q} data-combo-list>
             {order.map((t) => {
               const m = matches.get(t.id);
               return (
-                <li role="option" id={`opt-${t.slug}`} aria-selected="false" data-name={t.name} hidden={!!q && !m}>
-                  <a href={`/${t.slug}?s=picker`} tabindex={-1}>
+                <li id={`opt-${t.slug}`} data-combo-option data-name={t.name} hidden={!!q && !m}>
+                  <a href={`/${t.slug}?s=picker`}>
                     <Avatar tech={t} size={40} />
                     <span class="combo__text">
                       <strong class="combo__name">{q && m ? <Highlight text={t.name} ranges={m.ranges} /> : t.name}</strong>
@@ -106,7 +108,7 @@ pub.get('/', async (c) => {
                 </li>
               );
             })}
-            <li class="combo__empty" role="presentation" hidden={!q || shown > 0}>
+            <li class="combo__empty" hidden={!q || shown > 0}>
               No one by that name. Check the spelling, or clear the box to see everyone.
             </li>
           </ul>
@@ -213,14 +215,18 @@ pub.post(`/:slug{${SLUG}}`, async (c) => {
     const reuse = !tap && TAP_ID.test(given) && !(await one(c.env.DB, `SELECT 1 FROM taps WHERE id = ?`, given));
     const id = reuse ? given : newId('tap');
     const source = SOURCES.has(str(body.s, 10)) ? str(body.s, 10) : 'link';
-    await run(c.env.DB, `INSERT INTO taps (id, tech_id, source, created_at) VALUES (?, ?, ?, ?)`, id, tech.id, source, t);
+    await run(c.env.DB, `INSERT INTO taps (id, tech_id, source, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`, id, tech.id, source, t);
     tap = { id, tech_id: tech.id, customer_name: null, rating: null, comment: null, created_at: t, rated_at: null };
   }
   const firstRating = !tap.rating;
   const newlyLow = rating <= s.alert_threshold && (firstRating || (tap.rating ?? 0) > s.alert_threshold);
   const { pick, geo } = routeFor(c, s, tech);
-  await run(c.env.DB, `UPDATE taps SET customer_name = ?, rating = ?, comment = ?, rated_at = ?, resolved_at = NULL, location_id = ?, location_how = ?, geo = ? WHERE id = ?`,
-    name, rating, comment, t, pick?.id ?? null, pick?.how ?? null, describeGeo(geo), tap.id);
+  // A first rating only lands once (two quick taps on Continue: one wins), and a follow-up the office closed stays
+  // closed unless the new rating is newly low.
+  const saved = await run(c.env.DB, `UPDATE taps SET customer_name = ?, rating = ?, comment = ?, rated_at = ?, resolved_at = CASE WHEN ? THEN NULL ELSE resolved_at END,
+    location_id = ?, location_how = ?, geo = ? WHERE id = ? AND (? = 0 OR rating IS NULL)`,
+    name, rating, comment, t, newlyLow ? 1 : 0, pick?.id ?? null, pick?.how ?? null, describeGeo(geo), tap.id, firstRating ? 1 : 0);
+  if (!saved.meta.changes) return c.redirect(`/${tech.slug}/share?t=${tap.id}`, 303);
   if (firstRating && s.points.rating > 0) {
     await run(c.env.DB, `INSERT INTO points (id, tech_id, amount, reason, tap_id, created_at) VALUES (?, ?, ?, 'Customer rated the visit', ?, ?)`,
       newId('pt'), tech.id, s.points.rating, tap.id, t);
@@ -292,8 +298,8 @@ pub.get('/go/:tap/:site', async (c) => {
     if (!locationId) {
       // Staff previews (?as=<their slug>) and visits rated before locations were set up are routed now.
       const tech = tap
-        ? await one<Tech>(c.env.DB, `SELECT * FROM techs WHERE id = ?`, tap.tech_id)
-        : await one<Tech>(c.env.DB, `SELECT * FROM techs WHERE slug = ? AND active = 1`, str(c.req.query('as'), 40));
+        ? await one<Tech>(c.env.DB, `SELECT ${TECH_COLS} FROM techs WHERE id = ?`, tap.tech_id)
+        : await one<Tech>(c.env.DB, `SELECT ${TECH_COLS} FROM techs WHERE slug = ? AND active = 1`, str(c.req.query('as'), 40));
       const { pick, geo } = routeFor(c, s, tech);
       locationId = pick?.id ?? null;
       if (tap && pick) await run(c.env.DB, `UPDATE taps SET location_id = ?, location_how = ?, geo = COALESCE(geo, ?) WHERE id = ?`, pick.id, pick.how, describeGeo(geo), tapId);
@@ -311,9 +317,11 @@ pub.get('/photo/:id', async (c) => {
   const row = await one<{ photo: string | null }>(c.env.DB, `SELECT photo FROM techs WHERE id = ? AND active = 1`, c.req.param('id'));
   const m = row?.photo?.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
   if (!m) return c.notFound();
-  const bytes = Uint8Array.from(atob(m[2]), (ch) => ch.charCodeAt(0));
+  const bin = atob(m[2]);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const cache = c.req.query('v') ? 'public, max-age=31536000, immutable' : 'public, max-age=3600';
-  return c.body(bytes, 200, { 'content-type': m[1], 'cache-control': cache, 'content-security-policy': "default-src 'none'; sandbox" });
+  return c.body(bytes, 200, { 'content-type': m[1], 'cache-control': cache, 'content-security-policy': "default-src 'none'; sandbox", 'x-content-type-options': 'nosniff' });
 });
 
 // ---------- views ----------
@@ -367,7 +375,8 @@ function RatePage(p: { s: Settings; tech: Tech; tapId: string; source?: string; 
           <div class={`field ${errors.name ? 'field--invalid' : ''}`}>
             <label for="name">Who is reviewing?</label>
             <input id="name" name="name" autocomplete="name" required minlength={2} maxlength={80} value={values?.name ?? ''}
-              placeholder="Your first name and last initial" aria-describedby={`name-hint${errors.name ? ' err-name' : ''}`} />
+              placeholder="Your first name and last initial" aria-describedby={`name-hint${errors.name ? ' err-name' : ''}`}
+              aria-invalid={errors.name ? 'true' : undefined} autofocus={!!errors.name && !errors.rating} />
             <p class="hint" id="name-hint">Use the name on your Google account so {tech.first_name} gets the credit.</p>
             {errors.name && <p class="error" id="err-name">{errors.name}</p>}
           </div>
@@ -385,7 +394,9 @@ function RatePage(p: { s: Settings; tech: Tech; tapId: string; source?: string; 
         </form>
         <p class="fine">
           {companyName(s)} sees your name, rating and comment, to thank {tech.first_name} and follow up. Your rating here isn't posted anywhere.
-          {s.locations.length > 1 && ' Your rough area (from your internet connection) picks the right Google page.'}
+          {s.locations.length > 1
+            ? ' Your rough area (from your internet connection) picks the right Google page, and is deleted after 30 days.'
+            : ' Your rough area (from your internet connection) is kept for 30 days.'}
           {s.privacy_url && <> <a href={s.privacy_url} rel="noopener">Privacy policy</a></>}
         </p>
         {tapId !== 'preview' && (
@@ -466,13 +477,14 @@ function SharePage(p: {
                 <h2 class="h-sm">We're sorry the visit fell short.</h2>
                 <p class="muted small">Tell us what happened and a manager will call you to make it right.</p>
               </div>
-              {callback?.error && <p class="error" role="alert">{callback.error}</p>}
               <input type="hidden" name="t" value={tap.id} />
               <input type="hidden" name="name" value={tap.customer_name ?? ''} />
               <input type="hidden" name="rating" value={String(tap.rating ?? '')} />
               <div class={`field ${callback?.error ? 'field--invalid' : ''}`}>
                 <label for="cb-phone">Your phone number</label>
-                <input id="cb-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required maxlength={30} value={callback?.phone ?? ''} placeholder="(555) 555-0123" />
+                <input id="cb-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" required maxlength={30} value={callback?.phone ?? ''} placeholder="(555) 555-0123"
+                  aria-invalid={callback?.error ? 'true' : undefined} aria-describedby={callback?.error ? 'err-phone' : undefined} autofocus={!!callback?.error} />
+                {callback?.error && <p class="error" id="err-phone">{callback.error}</p>}
               </div>
               <div class="field">
                 <label for="cb-time">Best time to call</label>

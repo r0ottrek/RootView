@@ -44,7 +44,7 @@ const COLOR_FIELDS: { key: 'bg' | 'surface' | 'text' | 'action' | 'proof'; label
 ];
 
 const HEADING_FONTS = [
-  { v: 'sans', label: 'Modern sans (Manrope)' },
+  { v: 'sans', label: 'Modern sans (IBM Plex)' },
   { v: 'serif', label: 'Classic serif' },
   { v: 'display', label: 'Engraved capitals (Cinzel)' },
   { v: 'system', label: "The device's own font" },
@@ -202,7 +202,7 @@ function BrandingPage({ s, owner, errors }: { s: Settings; owner: boolean; error
                   </select></div>
                 <div class="field"><label for="body_font">Body text</label>
                   <select id="body_font" name="body_font" data-theme-input>
-                    <option value="sans" selected={t.body_font === 'sans'}>Modern sans (Manrope)</option>
+                    <option value="sans" selected={t.body_font === 'sans'}>Modern sans (IBM Plex)</option>
                     <option value="system" selected={t.body_font === 'system'}>The device's own font</option>
                   </select></div>
               </div>

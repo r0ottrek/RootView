@@ -7,7 +7,7 @@ import {
 } from '../../lib/reviews';
 import { audit } from '../../lib/audit';
 import { overLimit } from '../../lib/auth';
-import { getSecret } from '../../lib/settings';
+import { hasSecret } from '../../lib/settings';
 import { HOUR, MINUTE, clampInt, describeGap, fmtDateTime, str, zonedMidnight } from '../../lib/util';
 import { back } from '../../views/layout';
 import { ReviewCard, creditReason, creditsFor, type CreditView } from '../../views/review';
@@ -113,7 +113,7 @@ function QuickActions({ r, credits, techs, techName, ret }: { r: ReviewRow; cred
         </form>
       ))}
       {r.status !== 'not_tech' && open.length > 0 && (
-        <form method="post" action={`/admin/reviews/${r.id}/credit`} class="inline-form">
+        <form method="post" action={`/admin/reviews/${r.id}/credit`} class="credit-form">
           <input type="hidden" name="back" value={ret} />
           <label class="sr-only" for={`t-${r.id}`}>{first ? 'Credit to' : 'Also credit'}</label>
           <select id={`t-${r.id}`} name="tech" required><option value="">{first ? 'Credit to…' : 'Also credit…'}</option>{open.map((t) => <option value={t.id}>{t.name}</option>)}</select>
@@ -124,11 +124,13 @@ function QuickActions({ r, credits, techs, techName, ret }: { r: ReviewRow; cred
           <button class="btn btn--ghost btn--sm" type="submit">Credit</button>
         </form>
       )}
-      {r.status === 'unassigned' && (
-        <form method="post" action={`/admin/reviews/${r.id}/status`}><input type="hidden" name="status" value="not_tech" /><input type="hidden" name="back" value={ret} /><button class="linkbtn small" type="submit">Not a tech review</button></form>
-      )}
-      {credits.length > 0 && <a class="small" href={`/admin/reviews/${r.id}`}>Why {credits.map((x) => x.first_name).join(' & ')}?</a>}
-      {r.platform === 'google' && !r.reply && r.status !== 'history' && <a class="small" href={`/admin/reviews/${r.id}#reply`}>{r.reply_draft ? 'Reply (draft ready)' : 'Reply'}</a>}
+      <span class="rev__links">
+        {r.status === 'unassigned' && (
+          <form method="post" action={`/admin/reviews/${r.id}/status`}><input type="hidden" name="status" value="not_tech" /><input type="hidden" name="back" value={ret} /><button class="linkbtn small" type="submit">Not a tech review</button></form>
+        )}
+        {credits.length > 0 && <a class="small" href={`/admin/reviews/${r.id}`}>Why {credits.map((x) => x.first_name).join(' & ')}?</a>}
+        {r.platform === 'google' && !r.reply && r.status !== 'history' && <a class="small" href={`/admin/reviews/${r.id}#reply`}>{r.reply_draft ? 'Reply (draft ready)' : 'Reply'}</a>}
+      </span>
     </div>
   );
 }
@@ -207,7 +209,7 @@ rev.get('/:id', async (c) => {
     all<NearbyTap>(c.env.DB, `SELECT p.id, p.tech_id, t.first_name, p.customer_name, p.rating, p.site, p.source, p.created_at, p.clicked_at, p.review_id
       FROM taps p JOIN techs t ON t.id = p.tech_id WHERE p.created_at BETWEEN ? AND ? AND p.rating IS NOT NULL ORDER BY p.created_at DESC LIMIT 30`,
       r.posted_at - s.match_window_hours * HOUR, r.posted_at + 15 * MINUTE),
-    getSecret(c.env, 'google_refresh'),
+    hasSecret(c.env, 'google_refresh'),
   ]);
   const sugg = parseSuggestions(r).filter((sg) => !credits.some((x) => x.tech_id === sg.tech_id));
   const open = techs.filter((t) => t.active && !credits.some((x) => x.tech_id === t.id));

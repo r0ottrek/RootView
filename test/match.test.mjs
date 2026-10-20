@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AUTO_CREDIT, matchReview, mentionedTechs, nameScore } from '../.test-build/match.js';
-import { matchName, periodRange, zonedMidnight } from '../.test-build/util.js';
+import { ipBucket, matchName, periodRange, slugify, zonedMidnight } from '../.test-build/util.js';
 
 const MIN = 60_000, HOUR = 60 * MIN;
 const T0 = Date.UTC(2026, 8, 15, 20, 0); // Sep 15 2026, 1pm in Los Angeles
@@ -190,4 +190,41 @@ test('this month compares against the same stretch of last month', () => {
   assert.equal(new Date(r.start).toISOString(), '2026-09-01T07:00:00.000Z');
   assert.equal(new Date(r.prevStart).toISOString(), '2026-08-01T07:00:00.000Z');
   assert.equal(r.prevEnd - r.prevStart, at - r.start);
+});
+
+// ---------- added in the 1.2 audit ----------
+
+test("mentions: possessives count (\"Sebastian's work\")", () => {
+  const found = mentionedTechs("Sebastian's work was spotless, and Declan’s too.", techs);
+  assert.ok(found.has('t_sebastian'));
+  assert.ok(found.has('t_declan'));
+});
+
+test('two different customers with similar names: nobody is credited automatically', () => {
+  const earlier = T0 - 3 * HOUR;
+  const taps = [tap(), tap({ id: 'tap2', tech_id: 't_declan', customer_name: 'Maria Lee', created_at: earlier, rated_at: earlier, clicked_at: earlier })];
+  const r = matchReview(review({ reviewer_name: 'Maria L.' }), techs, taps, 72);
+  assert.deepEqual(r.credit, []);
+  assert.deepEqual(r.suggestions.map((c) => c.tech_id).sort(), ['t_declan', 't_sebastian']);
+});
+
+test('one customer who rated both techs of a crew: both are credited', () => {
+  const taps = [tap(), tap({ id: 'tap2', tech_id: 't_declan', created_at: T0 + MIN })];
+  const r = matchReview(review(), techs, taps, 72);
+  assert.deepEqual(r.credit.map((c) => c.tech_id).sort(), ['t_declan', 't_sebastian']);
+});
+
+test('tech links keep digits and dashes', () => {
+  assert.equal(slugify('mike2'), 'mike2');
+  assert.equal(slugify('Mike-2'), 'mike-2');
+  assert.equal(slugify('José O’Brien'), 'jose-obrien');
+  assert.equal(slugify('  --Ann  Marie-- '), 'ann-marie');
+});
+
+test("rate limits count an IPv6 visitor's whole /64 as one", () => {
+  assert.equal(ipBucket('2001:db8:1:2:aaaa::1'), ipBucket('2001:db8:1:2:ffff:1:2:3'));
+  assert.notEqual(ipBucket('2001:db8:1:2::1'), ipBucket('2001:db8:1:3::1'));
+  assert.equal(ipBucket('2001:db8::1'), '2001:db8:0:0::/64');
+  assert.equal(ipBucket('203.0.113.9'), '203.0.113.9');
+  assert.equal(ipBucket('::ffff:203.0.113.9'), '203.0.113.9');
 });

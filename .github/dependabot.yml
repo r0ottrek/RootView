@@ -1,0 +1,14 @@
+# Weekly pull requests for outdated packages and GitHub Actions. CI runs on each one before you merge it.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

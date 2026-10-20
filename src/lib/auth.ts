@@ -11,8 +11,8 @@
 import type { Context, MiddlewareHandler } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import type { AdminUser, AppEnv, Env, Tech } from '../env';
-import { one, run } from './db';
-import { DAY, MINUTE, b64url, now, randomToken, sha256hex } from './util';
+import { TECH_COLS, one, run, stmt } from './db';
+import { DAY, MINUTE, b64url, ipBucket, now, randomToken, sha256hex } from './util';
 
 // ---------- passwords ----------
 
@@ -137,7 +137,10 @@ export async function sessionFor(c: Context<AppEnv>, kind: SessionKind): Promise
     `SELECT subject_id, expires_at, last_seen_at FROM sessions WHERE id = ? AND kind = ?`, id, kind);
   const t = now();
   if (!row || row.expires_at < t) return null;
-  if (!row.last_seen_at || t - row.last_seen_at > SEEN_EVERY) await run(c.env.DB, `UPDATE sessions SET last_seen_at = ? WHERE id = ?`, t, id);
+  if (!row.last_seen_at || t - row.last_seen_at > SEEN_EVERY) {
+    // Best effort: "last seen" is only shown on the devices list, so a failed write mustn't sign anyone out.
+    try { await run(c.env.DB, `UPDATE sessions SET last_seen_at = ? WHERE id = ?`, t, id); } catch { /* ignore */ }
+  }
   return { id, subject_id: row.subject_id };
 }
 
@@ -167,7 +170,7 @@ export const requireOwner: MiddlewareHandler<AppEnv> = async (c, next) => {
 export async function currentTech(c: Context<AppEnv>): Promise<Tech | null> {
   const s = await sessionFor(c, 'tech');
   if (!s) return null;
-  const tech = await one<Tech>(c.env.DB, `SELECT * FROM techs WHERE id = ? AND active = 1`, s.subject_id);
+  const tech = await one<Tech>(c.env.DB, `SELECT ${TECH_COLS} FROM techs WHERE id = ? AND active = 1`, s.subject_id);
   if (tech) c.set('sessionId', s.id);
   return tech;
 }
@@ -201,11 +204,11 @@ export const sameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {
 
 const hmacKeys = new Map<string, Promise<CryptoKey>>();
 /**
- * A short key for the visitor's IP address, for rate limiting only (rows are cleared daily). Keyed with a
- * server secret, so the stored value can't be reversed by hashing every IPv4 address.
+ * A short key for the visitor's IP address (an IPv6 visitor's whole /64), for rate limiting only (rows are cleared
+ * after 2 days). Keyed with a server secret, so the stored value can't be reversed by hashing every IPv4 address.
  */
 export async function clientKey(c: Context<AppEnv>): Promise<string> {
-  const ip = c.req.header('cf-connecting-ip') ?? 'local';
+  const ip = ipBucket(c.req.header('cf-connecting-ip') ?? 'local');
   const secret = c.env.CRON_SECRET || c.env.SETUP_KEY || 'rootview-local';
   let key = hmacKeys.get(secret);
   if (!key) {
@@ -234,22 +237,20 @@ export async function overLimit(db: D1Database, key: string, max: number, window
   return !row;
 }
 
-/** Sign-in throttling: check before trying a password, then record failures (a success clears the counter). */
-export async function tooManyAttempts(db: D1Database, key: string, max = 8, windowMs = 15 * MINUTE): Promise<boolean> {
-  const row = await one<{ count: number; window_start: number }>(db, `SELECT count, window_start FROM throttle WHERE key = ?`, key);
-  return !!row && row.window_start > now() - windowMs && row.count >= max;
+/** Connections an account signed in from in the last 60 days, which the per-account cap leaves alone. */
+export async function familiar(db: D1Database, key: string): Promise<boolean> {
+  return !!(await one(db, `SELECT 1 FROM throttle WHERE key = ? AND window_start > ?`, `ok:${key}`, now() - 60 * DAY));
 }
 
-export async function recordAttempt(db: D1Database, key: string, success: boolean, windowMs = 15 * MINUTE): Promise<void> {
-  if (success) {
-    await run(db, `DELETE FROM throttle WHERE key = ?`, key);
-    return;
-  }
-  const t = now();
-  await run(db,
-    `INSERT INTO throttle (key, count, window_start) VALUES (?1, 1, ?2)
-     ON CONFLICT (key) DO UPDATE SET
-       count = CASE WHEN window_start < ?3 THEN 1 ELSE count + 1 END,
-       window_start = CASE WHEN window_start < ?3 THEN ?2 ELSE window_start END`,
-    key, t, t - windowMs);
+/** After a good sign-in: clear the failure counts and remember this connection for the account. */
+export async function signedIn(db: D1Database, failKeys: string[], okKey: string): Promise<void> {
+  await db.batch([
+    stmt(db, `DELETE FROM throttle WHERE key IN (SELECT value FROM json_each(?))`, JSON.stringify(failKeys)),
+    stmt(db, `INSERT INTO throttle (key, count, window_start) VALUES (?, 1, ?) ON CONFLICT (key) DO UPDATE SET window_start = excluded.window_start`, `ok:${okKey}`, now()),
+  ]);
+}
+
+/** A short, non-reversible stand-in for a typed email or username in rate-limit keys (they're kept for 2 days). */
+export async function whoKey(ident: string): Promise<string> {
+  return (await sha256hex(`who:${ident}`)).slice(0, 24);
 }

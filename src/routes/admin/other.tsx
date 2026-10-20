@@ -7,14 +7,14 @@ import { all, one, run, stmt } from '../../lib/db';
 import { HOW_LABEL, parseAreas, type RouteHow } from '../../lib/geo';
 import { accessToken, authUrl, exchangeCode, listAccounts, listLocations, pkcePair, revokeToken } from '../../lib/google';
 import { qrSvg } from '../../lib/qr';
-import { deleteTap, platformLabel, startFresh, syncGoogle } from '../../lib/reviews';
+import { deleteTap, deleteTaps, platformLabel, startFresh, syncGoogle } from '../../lib/reviews';
 import {
-  companyName, getSecret, locationLabel, saveSettings, setSecret, tagUrl, type GoogleLocation, type ReviewLocation, type ReviewSite, type Settings,
+  companyName, getSecret, hasSecret, locationLabel, saveSettings, setSecret, tagUrl, type GoogleLocation, type ReviewLocation, type ReviewSite, type Settings,
 } from '../../lib/settings';
 import { CALL_TIMES, HOUR, clampInt, fmtDate, fmtDateTime, line, newId, now, randomToken, relTime, sha256hex, str, telHref } from '../../lib/util';
 import { back } from '../../views/layout';
 import { Avatar, Chip, Empty, Icon, Pager, Stars } from '../../views/ui';
-import { SOURCE_LABEL, Seg, page, type Ctx } from './common';
+import { POINTS_CAP, SOURCE_LABEL, Seg, adjustPoints, page, pointsProblem, type Ctx } from './common';
 
 const other = new Hono<AppEnv>();
 
@@ -60,7 +60,7 @@ other.get('/activity', async (c) => {
   const s = c.get('settings');
   const q = c.req.query('f') ?? '';
   const f = (FILTERS as readonly string[]).includes(q) ? q : 'all';
-  const googleConnected = !!(await getSecret(c.env, 'google_refresh')) && s.google_locations.length > 0;
+  const googleConnected = (await hasSecret(c.env, 'google_refresh')) && s.google_locations.length > 0;
   const tech = /^[\w-]{1,40}$/.test(c.req.query('tech') ?? '') ? c.req.query('tech')! : '';
   const pageNo = clampInt(c.req.query('page'), 1, 1000, 1);
   const followups = f === 'low' || f === 'lowall';
@@ -103,8 +103,8 @@ other.get('/activity', async (c) => {
       <form class="filters" method="get">
         <input type="hidden" name="f" value={f} />
         <label class="sr-only" for="at">Tech</label>
-        <select id="at" name="tech" data-autosubmit><option value="">All techs</option>{techs.map((t) => <option value={t.id} selected={t.id === tech}>{t.name}</option>)}</select>
-        <noscript><button class="btn btn--ghost btn--sm" type="submit">Filter</button></noscript>
+        <select id="at" name="tech"><option value="">All techs</option>{techs.map((t) => <option value={t.id} selected={t.id === tech}>{t.name}</option>)}</select>
+        <button class="btn btn--ghost btn--sm" type="submit">Show</button>
       </form>
       {followups && shown.length ? (
         <div class="stack-md">{shown.map((p) => <FollowUpCard p={p} s={s} back={here} />)}</div>
@@ -196,7 +196,7 @@ function DeleteVisit({ id, back: ret, who }: { id: string; back: string; who: st
   return (
     <form method="post" action={`/admin/activity/${id}/delete`} data-confirm={`Delete this visit${who ? ` from ${who}` : ''}? Use this for tests. It can't be undone.`}>
       <input type="hidden" name="back" value={ret} />
-      <button class="linkbtn small" type="submit">Delete</button>
+      <button class="linkbtn small" type="submit" aria-label={`Delete visit${who ? ` from ${who}` : ''}`}>Delete</button>
     </form>
   );
 }
@@ -204,10 +204,11 @@ function DeleteVisit({ id, back: ret, who }: { id: string; back: string; who: st
 other.post('/activity/:id/delete', async (c) => {
   const b = await c.req.parseBody();
   const id = c.req.param('id');
-  const tap = await one<{ customer_name: string | null }>(c.env.DB, `SELECT customer_name FROM taps WHERE id = ?`, id);
+  const tap = await one<{ id: string }>(c.env.DB, `SELECT id FROM taps WHERE id = ?`, id);
   if (tap) {
     await deleteTap(c.env, id);
-    await audit(c, 'visit.delete', tap.customer_name ?? id);
+    // The id only: the activity log is kept, and the customer's name shouldn't outlive their visit.
+    await audit(c, 'visit.delete', id);
   }
   return c.redirect(back(safeBack(b.back, '/admin/activity'), { ok: 'Visit deleted.' }), 303);
 });
@@ -352,15 +353,13 @@ other.post('/rewards/rules', requireOwner, async (c) => {
 
 other.post('/rewards/adjust', async (c) => {
   const b = await c.req.parseBody();
-  const cap = c.get('admin').role === 'owner' ? 10_000 : 100;
+  const cap = c.get('admin').role === 'owner' ? POINTS_CAP.owner : POINTS_CAP.manager;
   const amount = clampInt(b.amount, -cap, cap, 0);
   const tech = str(b.tech, 40);
   if (!amount || !tech) return c.redirect(back('/admin/rewards', { err: `Pick a tech and a number of points between -${cap} and ${cap}.` }), 303);
   const reason = line(b.reason, 120) || (amount > 0 ? 'Bonus from the office' : 'Adjustment');
-  const res = await run(c.env.DB,
-    `INSERT INTO points (id, tech_id, amount, reason, created_by, created_at) SELECT ?, id, ?, ?, ?, ? FROM techs WHERE id = ?`,
-    newId('pt'), amount, reason, c.get('admin').name, now(), tech);
-  if (!res.meta.changes) return c.redirect(back('/admin/rewards', { err: "That tech doesn't exist." }), 303);
+  const res = await adjustPoints(c, tech, amount, reason);
+  if (res !== 'ok') return c.redirect(back('/admin/rewards', { err: pointsProblem(res) }), 303);
   await audit(c, 'points.adjust', `${amount > 0 ? '+' : ''}${amount} for ${tech}: ${reason}`);
   return c.redirect(back('/admin/rewards', { ok: 'Points recorded.' }), 303);
 });
@@ -388,13 +387,16 @@ other.post('/redemptions/:id', async (c) => {
   const t = now();
   let changed = 0;
   if (act === 'deny') {
-    changed = (await run(c.env.DB, `UPDATE redemptions SET status = 'denied', decided_at = ?, decided_by = ? WHERE id = ? AND status IN ('requested', 'approved')`, t, who, id)).meta.changes;
-    if (changed) {
-      await run(c.env.DB,
+    // One transaction: the refund goes in only if this request is the one that denied it.
+    const [denied] = await c.env.DB.batch([
+      stmt(c.env.DB, `UPDATE redemptions SET status = 'denied', decided_at = ?, decided_by = ? WHERE id = ? AND status IN ('requested', 'approved')`, t, who, id),
+      stmt(c.env.DB,
         `INSERT INTO points (id, tech_id, amount, reason, redemption_id, created_by, created_at)
-         SELECT ?, ?, ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM points WHERE redemption_id = ? AND amount > 0)`,
-        newId('pt'), r.tech_id, r.cost, `Refund: ${r.reward_name}`, id, who, t, id);
-    }
+         SELECT ?, ?, ?, ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM redemptions WHERE id = ? AND status = 'denied' AND decided_at = ?)
+           AND NOT EXISTS (SELECT 1 FROM points WHERE redemption_id = ? AND amount > 0)`,
+        newId('pt'), r.tech_id, r.cost, `Refund: ${r.reward_name}`, id, who, t, id, t, id),
+    ]);
+    changed = denied.meta.changes;
   } else if (act === 'approve') {
     changed = (await run(c.env.DB, `UPDATE redemptions SET status = 'approved', decided_at = ?, decided_by = ? WHERE id = ? AND status = 'requested'`, t, who, id)).meta.changes;
   } else if (act === 'fulfill') {
@@ -409,19 +411,24 @@ other.post('/redemptions/:id', async (c) => {
 // Settings (owners)
 // =====================================================================
 
-/** Review links may only point at the site they're for, so a careless or malicious edit can't send customers elsewhere. */
+/**
+ * Review links may only point at the site they're for, so a careless or malicious edit can't send customers
+ * elsewhere: known hosts only (not, say, sites.google.com), and no link that carries another address to forward to.
+ */
 const SITE_HOSTS: Record<string, RegExp> = {
-  google: /(^|\.)(google\.[a-z.]{2,6}|g\.page|goo\.gl)$/,
-  yelp: /(^|\.)yelp\.[a-z.]{2,6}$/,
-  bbb: /(^|\.)bbb\.org$/,
-  facebook: /(^|\.)(facebook\.com|fb\.com|fb\.me)$/,
+  google: /^(?:(?:www|search|maps)\.)?google\.(?:com|ca|ie|co\.uk|co\.nz|com\.au|[a-z]{2})$|^(?:g\.page|goo\.gl|maps\.app\.goo\.gl)$/,
+  yelp: /^(?:(?:www|m)\.)?yelp\.(?:com|ca|ie|co\.uk|co\.nz|com\.au)$/,
+  bbb: /^(?:www\.)?bbb\.org$/,
+  facebook: /^(?:(?:www|m)\.)?(?:facebook\.com|fb\.com)$|^fb\.me$/,
 };
 
 function reviewLink(site: string, raw: unknown): string | null {
   const v = str(raw, 500);
   try {
     const u = new URL(v);
-    return u.protocol === 'https:' && SITE_HOSTS[site]?.test(u.hostname.toLowerCase()) ? u.href : null;
+    if (u.protocol !== 'https:' || u.username || u.password || !SITE_HOSTS[site]?.test(u.hostname.toLowerCase())) return null;
+    if (/^\/url\b/i.test(u.pathname) || [...u.searchParams.values()].some((p) => /^(?:https?:)?\/\//i.test(p.trim()))) return null;
+    return u.href;
   } catch {
     return null;
   }
@@ -443,9 +450,9 @@ async function settingsPage(c: Ctx, extra: { invite?: { name: string; email: str
   }
   const [admins, googleRefresh] = await Promise.all([
     all<AdminRow>(c.env.DB, `SELECT id, name, email, role, last_login_at, totp_enabled, password_hash IS NOT NULL AS has_password, invite_expires_at FROM admins ORDER BY created_at`),
-    getSecret(env, 'google_refresh'),
+    hasSecret(env, 'google_refresh'),
   ]);
-  const googleConnected = !!googleRefresh;
+  const googleConnected = googleRefresh;
   const site = (id: string) => s.sites.find((x) => x.id === id)!;
   const origin = new URL(c.req.url).origin;
   const tzs = Intl.supportedValuesOf('timeZone');
@@ -769,9 +776,11 @@ other.post('/settings/general', requireOwner, async (c) => {
     ai_auto_draft: !!b.ai_auto_draft,
     match_window_hours: clampInt(b.match_window_hours, 24, 168, 72),
   };
-  const base = str(b.public_base_url, 200).replace(/\/+$/, '');
-  if (!base) patch.public_base_url = '';
-  else if (/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(:\d+)?$/i.test(base)) patch.public_base_url = base.toLowerCase();
+  // Empty means "this address"; anything else must be a plain https address (or the local preview).
+  const base = str(b.public_base_url, 200).trim().replace(/\/+$/, '').toLowerCase();
+  if (!base) patch.public_base_url = new URL(c.req.url).origin;
+  else if (/^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(:\d+)?$/.test(base) || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(base)) patch.public_base_url = base;
+  else return c.redirect(back('/admin/settings', { err: 'The address written on tags must be a web address starting with https://, like https://reviews.example.com.' }) + '#general', 303);
   if (Intl.supportedValuesOf('timeZone').includes(tz)) patch.timezone = tz;
   await saveSettings(c.env.DB, patch);
   await audit(c, 'settings.general', `alerts to ${patch.alert_emails?.length ?? 0}, tags at ${patch.public_base_url ?? s.public_base_url}`);
@@ -890,7 +899,7 @@ other.get('/privacy', requireOwner, async (c) => {
               <thead><tr><th scope="col"><span class="sr-only">Delete</span></th><th scope="col">When</th><th scope="col">Customer</th><th scope="col">Tech</th><th scope="col">Rating</th><th scope="col">Phone</th></tr></thead>
               <tbody>{rows.map((r) => (
                 <tr>
-                  <td><input type="checkbox" name="id" value={r.id} checked aria-label={`Delete visit from ${fmtDate(r.created_at, s.timezone)}`} /></td>
+                  <td><input type="checkbox" name="id" value={r.id} aria-label={`Delete visit from ${fmtDate(r.created_at, s.timezone)}`} /></td>
                   <td class="nowrap">{fmtDate(r.created_at, s.timezone)}</td>
                   <td>{r.customer_name ?? <span class="dim">—</span>}{r.comment && <p class="small muted line-clamp">{r.comment}</p>}</td>
                   <td>{r.first_name}</td>
@@ -910,9 +919,9 @@ other.get('/privacy', requireOwner, async (c) => {
 other.post('/privacy/delete', requireOwner, async (c) => {
   const b = await c.req.parseBody({ all: true });
   const ids = (Array.isArray(b.id) ? b.id : b.id ? [b.id] : []).map((v) => str(v, 40)).filter((v) => /^[\w-]+$/.test(v)).slice(0, 100);
-  for (const id of ids) await deleteTap(c.env, id);
-  if (ids.length) await audit(c, 'privacy.delete', `${ids.length} visit${ids.length === 1 ? '' : 's'}`);
-  return c.redirect(back('/admin/settings', { ok: `Deleted ${ids.length} visit${ids.length === 1 ? '' : 's'}.` }) + '#privacy', 303);
+  const n = ids.length ? await deleteTaps(c.env, ids) : 0;
+  if (n) await audit(c, 'privacy.delete', `${n} visit${n === 1 ? '' : 's'}`);
+  return c.redirect(back('/admin/settings', { ok: `Deleted ${n} visit${n === 1 ? '' : 's'}.` }) + '#privacy', 303);
 });
 
 // =====================================================================
@@ -1062,7 +1071,7 @@ other.post('/google/locations', requireOwner, async (c) => {
   await saveSettings(c.env.DB, { google_locations: locs, locations: mainFirst(list, mainId), sites, google_backfill: {}, google_last_sync_at: null });
   await audit(c, 'google.profiles', locs.map((l) => l.title).join(', '));
   if (!locs.length) return c.redirect(back('/admin/settings', { err: 'No profiles selected.' }) + '#google', 303);
-  const res = await syncGoogle(c.env);
+  const res = await syncGoogle(c.env, { defer: (p) => c.executionCtx.waitUntil(p) });
   if (!res.ok) return c.redirect(back('/admin/settings', { err: res.note }) + '#google', 303);
   return list.length > 1
     ? c.redirect(`${back('/admin/settings', { ok: `Connected. ${res.note} Next: check the cities each location covers, then save.` })}#locations`, 303)
@@ -1074,7 +1083,7 @@ other.post('/google/sync', async (c) => {
   // Anyone in the office can check for new reviews; re-importing all history is an owner's call.
   const full = str(b.full) === '1' && c.get('admin').role === 'owner';
   if (full) await saveSettings(c.env.DB, { google_backfill: {}, google_last_sync_at: null });
-  const res = await syncGoogle(c.env, { full });
+  const res = await syncGoogle(c.env, { full, defer: (p) => c.executionCtx.waitUntil(p) });
   const ref = c.req.header('referer') ?? '';
   const ret = ref.includes('/admin/settings') ? '/admin/settings' : '/admin';
   return c.redirect(back(ret, res.ok ? { ok: `Checked Google. ${res.note}` } : { err: res.note }) + (ret === '/admin/settings' ? '#google' : ''), 303);

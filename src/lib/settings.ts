@@ -136,6 +136,11 @@ export async function getSecret(env: Env, key: string): Promise<string | null> {
   return row ? open(env, row.value) : null;
 }
 
+/** Whether a secret is stored, without decrypting it (so a lost ENCRYPTION_KEY can't break pages that only ask). */
+export async function hasSecret(env: Env, key: string): Promise<boolean> {
+  return !!(await one(env.DB, `SELECT 1 FROM settings WHERE key = ?`, `_${key}`));
+}
+
 export async function setSecret(env: Env, key: string, value: string | null): Promise<void> {
   if (value == null) await run(env.DB, `DELETE FROM settings WHERE key = ?`, `_${key}`);
   else await run(env.DB, `INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`, `_${key}`, await seal(env, value));
@@ -150,8 +155,9 @@ export function enabledSites(s: Settings): ReviewSite[] {
   return s.sites.filter((x) => x.enabled && x.url);
 }
 
-export function tagUrl(s: Settings, slug: string, source: 'nfc' | 'qr' | 'text' | 'link' = 'nfc'): string {
-  const base = s.public_base_url.replace(/\/+$/, '');
+/** A tech's public link. `origin` (this request's own address) stands in if "Address written on tags" is empty. */
+export function tagUrl(s: Settings, slug: string, source: 'nfc' | 'qr' | 'text' | 'link' = 'nfc', origin = ''): string {
+  const base = (s.public_base_url || origin).replace(/\/+$/, '');
   return `${base}/${slug}${source === 'link' ? '' : `?s=${source}`}`;
 }
 

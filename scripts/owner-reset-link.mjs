@@ -12,7 +12,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 
 const [email, site] = process.argv.slice(2);
-if (!email || !/^[^@\s'"]+@[^@\s'"]+\.[^@\s'"]+$/.test(email) || !site || !/^https?:\/\/[^\s'"]+$/.test(site)) {
+// Plain characters only: both values end up inside a command you paste into a shell.
+if (!email || !/^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test(email) || !site || !/^https?:\/\/[A-Za-z0-9.:\/_-]+$/.test(site)) {
   console.error('Usage: node scripts/owner-reset-link.mjs <office login email> <site address, e.g. https://reviews.example.com>');
   process.exit(1);
 }

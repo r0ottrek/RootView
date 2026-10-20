@@ -3,13 +3,13 @@ import { Hono, type Context } from 'hono';
 import type { AppEnv } from '../env';
 import {
   clientKey, currentAdmin, endSession, hashPassword, needsRehash, overLimit, passwordProblem, sameSecret, sessionFor, startSession,
-  verifyAgainstNobody, verifyPassword,
+  familiar, signedIn, verifyAgainstNobody, verifyPassword, whoKey,
 } from '../lib/auth';
 import { open } from '../lib/crypto';
-import { one, run, scalar, stmt } from '../lib/db';
+import { one, run, scalar } from '../lib/db';
 import { companyName, saveSettings } from '../lib/settings';
 import { verifyTotp } from '../lib/totp';
-import { MINUTE, line, newId, now, sha256hex, str } from '../lib/util';
+import { HOUR, MINUTE, line, newId, now, sha256hex, str } from '../lib/util';
 import { Brand, Doc, render, useSettings } from '../views/layout';
 
 const auth = new Hono<AppEnv>();
@@ -20,10 +20,10 @@ const EMAIL = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 function Card({ title, children }: { title: string; children?: unknown }) {
   const s = useSettings();
   return (
-    <Doc title={`${title} · ${companyName(s)}`} bodyClass="pub">
+    <Doc title={`${title} · ${companyName(s)}`} bodyClass="pub pub--auth">
       <main id="main" class="pub__main">
         <header class="pub__head"><Brand /></header>
-        <section class="pub__card">
+        <section class="pub__card pub__card--box">
           <h1 class="h-md">{title}</h1>
           {children}
         </section>
@@ -35,7 +35,7 @@ function Card({ title, children }: { title: string; children?: unknown }) {
 // ---------- first owner ----------
 
 /** A setup key someone could guess (or the placeholder from the example file) is refused. */
-const weakSetupKey = (k: string) => k.length < 16 || /change[-_ ]?me/i.test(k);
+const weakSetupKey = (k: string) => k.length < 16 || new Set(k).size < 8 || /change[-_ ]?me/i.test(k);
 
 function setupProblem(c: Context<AppEnv>): string | null {
   if (!c.env.SETUP_KEY) return 'Set SETUP_KEY on the server first (see the README).';
@@ -113,17 +113,23 @@ auth.post('/admin/login', async (c) => {
   const password = typeof b.password === 'string' ? b.password.slice(0, 200) : '';
   const next = safeNext(str(b.next, 300));
   const ip = await clientKey(c);
-  // Counted before checking, so parallel guesses can't slip past. Keyed per email + connection and per connection,
-  // so a stranger guessing elsewhere can't lock the real owner out.
-  if ((await overLimit(c.env.DB, `login:${email}:${ip}`, 8, 15 * MINUTE)) || (await overLimit(c.env.DB, `login:ip:${ip}`, 30, 15 * MINUTE))) {
+  const who = await whoKey(email);
+  // Counted before checking, so parallel guesses can't slip past. Per connection first (so a flood stops writing
+  // rows once it's blocked), then per email + connection, so a stranger guessing elsewhere can't lock the owner out.
+  if ((await overLimit(c.env.DB, `login:ip:${ip}`, 30, 15 * MINUTE)) || (await overLimit(c.env.DB, `login:${who}:${ip}`, 8, 15 * MINUTE))) {
     return render(c, <LoginForm next={next} email={email} error="Too many attempts. Wait 15 minutes and try again." />, 429);
+  }
+  // A looser cap per email across every other connection, so guessing from many addresses at once still runs out.
+  // Connections this account signed in from recently aren't counted, so nobody can lock the owner out of their own.
+  if (!(await familiar(c.env.DB, `login:${who}:${ip}`)) && (await overLimit(c.env.DB, `login:acct:${who}`, 40, HOUR))) {
+    return render(c, <LoginForm next={next} email={email} error="Too many attempts on this account. Wait an hour and try again." />, 429);
   }
   const admin = await one<{ id: string; password_hash: string | null; totp_enabled: number }>(c.env.DB,
     `SELECT id, password_hash, totp_enabled FROM admins WHERE email = ?`, email);
   // Same amount of work whether or not the email exists, so response times don't reveal who has an account.
   const ok = admin?.password_hash ? await verifyPassword(password, admin.password_hash) : await verifyAgainstNobody(password, c.env);
   if (!ok || !admin?.password_hash) return render(c, <LoginForm next={next} email={email} error="Email or password is wrong." />, 422);
-  await run(c.env.DB, `DELETE FROM throttle WHERE key = ?`, `login:${email}:${ip}`);
+  await signedIn(c.env.DB, [`login:${who}:${ip}`, `login:acct:${who}`], `login:${who}:${ip}`);
   if (needsRehash(admin.password_hash, c.env)) {
     await run(c.env.DB, `UPDATE admins SET password_hash = ? WHERE id = ?`, await hashPassword(password, c.env), admin.id);
   }
@@ -241,11 +247,12 @@ auth.post('/admin/invite/:token', async (c) => {
   const pw = typeof b.password === 'string' ? b.password : '';
   const problem = passwordProblem(pw) ?? (pw !== b.confirm ? "The two passwords don't match." : null);
   if (problem) return render(c, <AdminInviteForm who={who} error={problem} />, 422);
-  await c.env.DB.batch([
-    stmt(c.env.DB, `UPDATE admins SET password_hash = ?, invite_hash = NULL, invite_expires_at = NULL, last_login_at = ? WHERE id = ?`,
-      await hashPassword(pw, c.env), now(), who.id),
-    stmt(c.env.DB, `DELETE FROM sessions WHERE kind IN ('admin', 'mfa') AND subject_id = ?`, who.id),
-  ]);
+  // Only the request that actually uses up the invite gets in (two at once with the same link: one wins).
+  const used = await run(c.env.DB,
+    `UPDATE admins SET password_hash = ?, invite_hash = NULL, invite_expires_at = NULL, last_login_at = ? WHERE id = ? AND invite_hash = ?`,
+    await hashPassword(pw, c.env), now(), who.id, await sha256hex(c.req.param('token') ?? ''));
+  if (!used.meta.changes) return render(c, <AdminInviteGone />, 404);
+  await run(c.env.DB, `DELETE FROM sessions WHERE kind IN ('admin', 'mfa') AND subject_id = ?`, who.id);
   await startSession(c, 'admin', who.id);
   return c.redirect('/admin', 303);
 });

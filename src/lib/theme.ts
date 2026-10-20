@@ -26,10 +26,10 @@ export interface Theme {
 }
 
 export const PRESETS: Record<string, Omit<Theme, 'preset'> & { label: string }> = {
-  midnight: { label: 'Midnight', mode: 'dark', bg: '#0b0c10', surface: '#14161b', text: '#eceef2', action: '#2563eb', proof: '#22c55e', corners: 'soft', heading_font: 'sans', body_font: 'sans' },
+  midnight: { label: 'Midnight', mode: 'dark', bg: '#0a0b0d', surface: '#121418', text: '#e6e8eb', action: '#7d9dbf', proof: '#6dbb8f', corners: 'soft', heading_font: 'sans', body_font: 'sans' },
   graphite: { label: 'Graphite', mode: 'dark', bg: '#000000', surface: '#0b0b0b', text: '#ededed', action: '#e11d48', proof: '#22c55e', corners: 'soft', heading_font: 'sans', body_font: 'sans' },
   forest: { label: 'Forest', mode: 'dark', bg: '#0b1410', surface: '#122019', text: '#e7f0ea', action: '#f59e0b', proof: '#34d399', corners: 'round', heading_font: 'serif', body_font: 'sans' },
-  daylight: { label: 'Daylight', mode: 'light', bg: '#f6f7f9', surface: '#ffffff', text: '#16181d', action: '#2563eb', proof: '#16a34a', corners: 'soft', heading_font: 'sans', body_font: 'sans' },
+  daylight: { label: 'Daylight', mode: 'light', bg: '#f6f7f8', surface: '#ffffff', text: '#1a1d21', action: '#46698c', proof: '#2e7a55', corners: 'soft', heading_font: 'sans', body_font: 'sans' },
   sand: { label: 'Sand', mode: 'light', bg: '#faf6ef', surface: '#ffffff', text: '#2a2119', action: '#c2410c', proof: '#15803d', corners: 'round', heading_font: 'serif', body_font: 'sans' },
   harbor: { label: 'Harbor', mode: 'light', bg: '#f1f6f9', surface: '#ffffff', text: '#0f2233', action: '#0e7490', proof: '#059669', corners: 'sharp', heading_font: 'display', body_font: 'sans' },
 };
@@ -118,11 +118,14 @@ export function contrast(a: string, b: string): number {
 /** Black or white, whichever reads better on this color. */
 export const readableOn = (hex: string): string => (contrast(hex, '#ffffff') >= contrast(hex, '#000000') ? '#ffffff' : '#0a0a0a');
 
-/** Shift a color toward the page's text color until it reads on the background (for colored text like links). */
-function readableAccent(color: string, bg: string, text: string): string {
-  for (let i = 0; i <= 10; i++) {
-    const c = mix(color, text, i * 0.08);
-    if (contrast(c, bg) >= 4.5) return c;
+/**
+ * Shift a color toward the page's text color until it has `min` contrast on every one of `grounds`
+ * (colored links on the page and on panels, grey hint text, form field borders).
+ */
+function legible(color: string, text: string, min: number, ...grounds: string[]): string {
+  for (let i = 0; i <= 20; i++) {
+    const c = mix(color, text, i * 0.05);
+    if (grounds.every((g) => contrast(c, g) >= min)) return c;
   }
   return text;
 }
@@ -130,15 +133,15 @@ function readableAccent(color: string, bg: string, text: string): string {
 // ---------- tokens ----------
 
 const FONTS: Record<HeadingFont | BodyFont, string> = {
-  sans: "'Manrope', 'Segoe UI', Helvetica, Arial, sans-serif",
+  sans: "'IBM Plex Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   system: "system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif",
   serif: "Georgia, 'Iowan Old Style', 'Times New Roman', serif",
   display: "'Cinzel', Georgia, 'Times New Roman', serif",
 };
 
-const RADIUS: Record<Corners, [number, number, number]> = { sharp: [3, 5, 6], soft: [8, 12, 16], round: [12, 18, 24] };
+const RADIUS: Record<Corners, [number, number, number]> = { sharp: [3, 4, 6], soft: [7, 10, 12], round: [10, 14, 18] };
 
-const DANGER = { dark: '#ff6b6b', light: '#c62828' };
+const DANGER = { dark: '#f87171', light: '#c42323' };
 
 /** Every CSS custom property the stylesheet uses, from a theme. */
 export function themeTokens(t: Theme): Record<string, string> {
@@ -159,18 +162,17 @@ export function themeTokens(t: Theme): Record<string, string> {
     '--ink': dark ? mix(t.text, '#ffffff', 0.6) : mix(t.text, '#000000', 0.4),
     '--text': t.text,
     '--text-2': mix(t.text, t.bg, dark ? 0.36 : 0.32),
-    '--text-3': mix(t.text, t.bg, dark ? 0.52 : 0.46),
+    '--text-3': legible(mix(t.text, t.bg, dark ? 0.48 : 0.44), t.text, 4.5, t.bg, t.surface),
+    '--line-ctl': legible(mix(t.text, t.bg, 0.62), t.text, 3, t.bg, t.surface),
     '--action': t.action,
-    '--action-deep': mix(t.action, dark ? '#000000' : '#000000', 0.14),
-    '--action-glow': alpha(t.action, 0.28),
+    '--action-deep': mix(t.action, '#000000', 0.14),
     '--action-tint': alpha(t.action, dark ? 0.12 : 0.1),
-    '--action-text': readableAccent(t.action, t.bg, t.text),
+    '--action-text': legible(t.action, t.text, 4.5, t.bg, t.surface),
     '--on-action': readableOn(t.action),
     '--proof': t.proof,
     '--proof-deep': mix(t.proof, '#000000', 0.18),
-    '--proof-glow': alpha(t.proof, 0.28),
     '--proof-tint': alpha(t.proof, dark ? 0.13 : 0.12),
-    '--proof-text': readableAccent(t.proof, t.bg, t.text),
+    '--proof-text': legible(t.proof, t.text, 4.5, t.bg, t.surface),
     '--on-proof': readableOn(t.proof),
     '--danger': danger,
     '--danger-tint': alpha(danger, dark ? 0.1 : 0.08),
@@ -203,6 +205,10 @@ export function contrastWarnings(t: Theme): string[] {
   check(t.text, t.surface, 4.5, 'Text on panels');
   check(tok['--on-action'], t.action, 4.5, 'Button text on the button color');
   check(t.proof, t.bg, 3, 'Stars on the page background');
-  check(tok['--text-3'], t.bg, 3, 'Small grey text');
+  check(tok['--text-3'], t.bg, 4.5, 'Small grey text');
+  check(tok['--text-3'], t.surface, 4.5, 'Small grey text on panels');
+  check(tok['--action-text'], t.surface, 4.5, 'Links on panels');
+  check(tok['--line-ctl'], t.surface, 3, 'Form field borders');
+  check(tok['--danger'], mix(t.surface, tok['--danger'], t.mode === 'dark' ? 0.1 : 0.08), 4.5, 'Error text');
   return out;
 }

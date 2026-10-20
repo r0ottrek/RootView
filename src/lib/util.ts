@@ -78,8 +78,25 @@ export function matchName(name: string, query: string): NameMatch | null {
   return at >= 0 ? { score: 1, ranges: [toOriginal(at, at + flat.length)] } : null;
 }
 
+/**
+ * The part of a visitor's IP address that rate limits count. Anyone with an IPv6 line or server controls a whole
+ * /64 (billions of addresses), so the first four groups count as one visitor; IPv4 addresses are used as they are.
+ */
+export function ipBucket(ip: string): string {
+  const v4 = ip.match(/(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4) return v4[1];
+  if (!ip.includes(':')) return ip;
+  const [head, tail] = ip.toLowerCase().split('::');
+  const h = head ? head.split(':') : [];
+  const t = tail ? tail.split(':') : [];
+  const groups = tail === undefined ? h : [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t];
+  return `${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, '')).join(':')}::/64`;
+}
+
+/** A tech's link: "José O'Brien" → "jose-obrien". Digits and dashes stay ("mike-2"). */
 export function slugify(s: string): string {
-  return normName(s).replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 40);
+  return s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/['’`]/g, '')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+/, '').slice(0, 40).replace(/-+$/, '');
 }
 
 export const RESERVED_SLUGS = new Set([
@@ -251,5 +268,5 @@ export function avg1(v: number | null | undefined): string {
 }
 
 export function isBot(ua: string | undefined): boolean {
-  return /bot|crawler|spider|facebookexternalhit|slack|whatsapp|telegram|discord|preview|embedly|linkexpanding|skype|curl|wget|python-requests/i.test(ua ?? '');
+  return /\bbot\b|bot\/|crawler|spider|facebookexternalhit|slack|whatsapp|telegram|discord|preview|embedly|linkexpanding|skype|curl|wget|python-requests/i.test(ua ?? '');
 }

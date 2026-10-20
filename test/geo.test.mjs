@@ -22,6 +22,8 @@ test('areas: typed lists split on commas and lines, keeping "City, CA" together 
   assert.deepEqual(parseAreas('Austin, Texas, USA\nRound Rock, TX; Toronto, ON, Canada'), ['Austin', 'Round Rock', 'Toronto'], 'any state, province or country');
   assert.deepEqual(parseAreas('Brooklyn, New York'), ['Brooklyn', 'New York'], 'New York is a city too');
   assert.deepEqual(parseAreas(''), []);
+  assert.deepEqual(parseAreas('Riverside, Ontario, Upland'), ['Riverside', 'Ontario', 'Upland'], 'a state name with another place after it is a city');
+  assert.deepEqual(parseAreas('Springfield, MO, Nevada, Ozark'), ['Springfield', 'Nevada', 'Ozark']);
 });
 
 test("the tech's choice for today wins over everything else", () => {

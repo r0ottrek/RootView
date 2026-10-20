@@ -9,16 +9,16 @@ import { Hono, type Context } from 'hono';
 import type { AppEnv, Tech } from '../env';
 import {
   clientKey, endSession, hashPassword, needsRehash, overLimit, passwordProblem, requireTech, revokeSessions, startSession,
-  verifyAgainstNobody, verifyPassword,
+  familiar, signedIn, verifyAgainstNobody, verifyPassword, whoKey,
 } from '../lib/auth';
-import { all, one, run, stmt } from '../lib/db';
+import { TECH_COLS, all, one, run, stmt } from '../lib/db';
 import { sendAlert } from '../lib/email';
 import { dayKey } from '../lib/geo';
 import { qrSvg } from '../lib/qr';
 import type { ReviewRow } from '../lib/reviews';
 import { companyName, tagUrl } from '../lib/settings';
 import { leaderboard, pointsBalance } from '../lib/stats';
-import { MINUTE, avg1, clampInt, fmtDate, line, newId, now, periodRange, relTime, sha256hex, str } from '../lib/util';
+import { HOUR, MINUTE, avg1, clampInt, fmtDate, line, newId, now, periodRange, relTime, sha256hex, str } from '../lib/util';
 import { Brand, Doc, TechShell, back, flashFrom, render } from '../views/layout';
 import { ReviewCard, creditsFor } from '../views/review';
 import { Avatar, Empty, Icon, Pager, Stat } from '../views/ui';
@@ -29,10 +29,10 @@ const me = new Hono<AppEnv>();
 
 function AuthCard({ title, children }: { title: string; children?: unknown }) {
   return (
-    <Doc title={title} bodyClass="pub" app="tech">
+    <Doc title={title} bodyClass="pub pub--auth" app="tech">
       <main id="main" class="pub__main">
         <header class="pub__head"><Brand /></header>
-        <section class="pub__card">
+        <section class="pub__card pub__card--box">
           <h1 class="h-md">{title}</h1>
           {children}
         </section>
@@ -65,18 +65,24 @@ me.post('/me/login', async (c) => {
   const ident = line(b.ident, 120).toLowerCase();
   const password = typeof b.password === 'string' ? b.password.slice(0, 200) : '';
   const ip = await clientKey(c);
-  // Counted before checking, so parallel guesses can't slip past the limit. A success clears the per-account count.
-  if ((await overLimit(c.env.DB, `tech-login:${ident}:${ip}`, 8, 15 * MINUTE)) || (await overLimit(c.env.DB, `tech-login:ip:${ip}`, 30, 15 * MINUTE))) {
+  const digits = ident.replace(/\D/g, '');
+  // A phone number counts as one account however it's typed.
+  const who = await whoKey(digits.length >= 10 ? `tel:${digits.slice(-10)}` : ident);
+  // Counted before checking, so parallel guesses can't slip past the limit. A success clears the per-account counts.
+  // Tech links are public, so the cap across every connection skips phones this tech signed in from recently.
+  if ((await overLimit(c.env.DB, `tech-login:ip:${ip}`, 30, 15 * MINUTE)) || (await overLimit(c.env.DB, `tech-login:${who}:${ip}`, 8, 15 * MINUTE))) {
     return render(c, <LoginForm ident={ident} error="Too many tries. Wait 15 minutes and try again." />, 429);
   }
-  const digits = ident.replace(/\D/g, '');
+  if (!(await familiar(c.env.DB, `tech-login:${who}:${ip}`)) && (await overLimit(c.env.DB, `tech-login:acct:${who}`, 40, HOUR))) {
+    return render(c, <LoginForm ident={ident} error="Too many tries on this account. Wait an hour, or ask the office for a sign-in link." />, 429);
+  }
   const tech = await one<Tech>(c.env.DB,
-    `SELECT * FROM techs WHERE active = 1 AND password_hash IS NOT NULL
+    `SELECT ${TECH_COLS} FROM techs WHERE active = 1 AND password_hash IS NOT NULL
        AND (slug = ?1 OR lower(email) = ?1 OR (length(?2) >= 10 AND replace(replace(replace(replace(replace(phone, '(', ''), ')', ''), '-', ''), ' ', ''), '+', '') LIKE '%' || ?2))
      LIMIT 1`, ident, digits);
   const ok = tech?.password_hash ? await verifyPassword(password, tech.password_hash) : await verifyAgainstNobody(password, c.env);
   if (!ok || !tech) return render(c, <LoginForm ident={ident} error="That username or password is wrong." />, 422);
-  await run(c.env.DB, `DELETE FROM throttle WHERE key = ?`, `tech-login:${ident}:${ip}`);
+  await signedIn(c.env.DB, [`tech-login:${who}:${ip}`, `tech-login:acct:${who}`], `tech-login:${who}:${ip}`);
   if (needsRehash(tech.password_hash!, c.env)) await run(c.env.DB, `UPDATE techs SET password_hash = ? WHERE id = ?`, await hashPassword(password, c.env), tech.id);
   await startSession(c, 'tech', tech.id);
   return c.redirect('/me', 303);
@@ -87,7 +93,7 @@ me.post('/me/login', async (c) => {
 async function inviteTech(c: Context<AppEnv>): Promise<Tech | null> {
   const token = c.req.param('token') ?? '';
   if (!/^[A-Za-z0-9_-]{20,80}$/.test(token)) return null;
-  return one<Tech>(c.env.DB, `SELECT * FROM techs WHERE invite_hash = ? AND invite_expires_at > ? AND active = 1`, await sha256hex(token), now());
+  return one<Tech>(c.env.DB, `SELECT ${TECH_COLS} FROM techs WHERE invite_hash = ? AND invite_expires_at > ? AND active = 1`, await sha256hex(token), now());
 }
 
 function InviteForm({ tech, error }: { tech: Tech; error?: string }) {
@@ -125,11 +131,12 @@ me.post('/invite/:token', async (c) => {
   const pw = typeof b.password === 'string' ? b.password : '';
   const problem = passwordProblem(pw) ?? (pw !== b.confirm ? "The two passwords don't match." : null);
   if (problem) return render(c, <InviteForm tech={tech} error={problem} />, 422);
-  await c.env.DB.batch([
-    stmt(c.env.DB, `UPDATE techs SET password_hash = ?, invite_hash = NULL, invite_expires_at = NULL, updated_at = ? WHERE id = ? AND invite_hash IS NOT NULL`,
-      await hashPassword(pw, c.env), now(), tech.id),
-    stmt(c.env.DB, `DELETE FROM sessions WHERE kind = 'tech' AND subject_id = ?`, tech.id),
-  ]);
+  // Only the request that actually uses up the invite gets in (two at once with the same link: one wins).
+  const used = await run(c.env.DB,
+    `UPDATE techs SET password_hash = ?, invite_hash = NULL, invite_expires_at = NULL, updated_at = ? WHERE id = ? AND invite_hash = ?`,
+    await hashPassword(pw, c.env), now(), tech.id, await sha256hex(c.req.param('token') ?? ''));
+  if (!used.meta.changes) return render(c, <InviteGone />, 404);
+  await run(c.env.DB, `DELETE FROM sessions WHERE kind = 'tech' AND subject_id = ?`, tech.id);
   await startSession(c, 'tech', tech.id);
   return c.redirect(`/me?ok=${encodeURIComponent(`You're in, ${tech.first_name}. Add this page to your home screen.`)}`, 303);
 });
@@ -149,7 +156,7 @@ me.get('/me', async (c) => {
   const balance = await pointsBalance(c.env.DB, tech.id);
   const reviews = await all<ReviewRow>(c.env.DB,
     `SELECT r.* FROM reviews r JOIN credits c ON c.review_id = r.id WHERE c.tech_id = ? ORDER BY r.posted_at DESC LIMIT 3`, tech.id);
-  const link = tagUrl(s, tech.slug, 'text');
+  const link = tagUrl(s, tech.slug, 'text', new URL(c.req.url).origin);
   const smsBody = `Thanks for choosing ${companyName(s)}! It would mean a lot if you'd rate today's visit: ${link}`;
   const ranked = board.filter((r) => r.reviews > 0);
   const top = board.slice(0, 5);
@@ -157,6 +164,7 @@ me.get('/me', async (c) => {
   const homeLoc = s.locations.find((l) => l.id === tech.home_location) ?? s.locations[0];
   return render(c, (
     <TechShell title="Home" tech={tech} active="home" flash={flashFrom(c)}>
+      <h1 class="sr-only">Home</h1>
       <section class="me-hero">
         <p class="eyebrow">{range.label}</p>
         <div class="me-stats">
@@ -200,7 +208,7 @@ me.get('/me', async (c) => {
       </section>
 
       <section class="me-section">
-        <div class="row-between"><h2 class="h-sm">Your latest reviews</h2><a class="small" href="/me/reviews">See all</a></div>
+        <div class="row-between"><h2 class="h-sm">Your latest reviews</h2><a class="small" href="/me/reviews" aria-label="See all my reviews">See all</a></div>
         {reviews.length ? (
           <div class="stack-md">{reviews.map((r) => <ReviewCard r={r} tz={s.timezone} clamp />)}</div>
         ) : (
@@ -235,7 +243,7 @@ function BoardRow({ r, rank, me: isMe }: { r: Awaited<ReturnType<typeof leaderbo
 me.get('/me/qr', (c) => {
   const s = c.get('settings');
   const tech = c.get('tech');
-  const url = tagUrl(s, tech.slug, 'qr');
+  const url = tagUrl(s, tech.slug, 'qr', new URL(c.req.url).origin);
   return render(c, (
     <Doc title={`My QR code · ${companyName(s)}`} bodyClass="qr-screen" app="tech">
       <main id="main" class="qr-screen__main">
@@ -260,7 +268,7 @@ me.get('/me/reviews', async (c) => {
     <TechShell title="My reviews" tech={tech} active="reviews">
       <h1 class="h-page">My reviews</h1>
       {rows.length ? (
-        <div class="stack-md">{rows.slice(0, 20).map((r) => <ReviewCard r={r} tz={s.timezone} credits={(credits.get(r.id) ?? []).filter((x) => x.tech_id !== tech.id)} />)}</div>
+        <div class="stack-md">{rows.slice(0, 20).map((r) => <ReviewCard r={r} tz={s.timezone} credits={(credits.get(r.id) ?? []).filter((x) => x.tech_id !== tech.id)} reasons={false} />)}</div>
       ) : (
         <Empty title="No reviews yet">Hand customers your tag at the end of each job. Reviews that mention you, or come from customers who used your tag, land here.</Empty>
       )}
@@ -283,6 +291,7 @@ me.get('/me/rewards', async (c) => {
   const p = s.points;
   return render(c, (
     <TechShell title="Rewards" tech={tech} active="rewards" flash={flashFrom(c)}>
+      <h1 class="sr-only">Rewards</h1>
       <section class="me-hero">
         <p class="eyebrow">Your points</p>
         <p class="bignum tnum">{balance}</p>
@@ -296,7 +305,7 @@ me.get('/me/rewards', async (c) => {
               <li class="reward">
                 <div><strong>{r.name}</strong>{r.description && <p class="small muted">{r.description}</p>}</div>
                 <form method="post" action={`/me/rewards/${r.id}`} data-confirm={`Spend ${r.cost} points on ${r.name}?`}>
-                  <button class={`btn btn--sm ${balance >= r.cost ? 'btn--green' : 'btn--ghost'}`} type="submit" disabled={balance < r.cost}>{r.cost} pts</button>
+                  <button class={`btn btn--sm ${balance >= r.cost ? 'btn--green' : 'btn--ghost'}`} type="submit" disabled={balance < r.cost} aria-label={`${r.cost} pts: get ${r.name}`}>{r.cost} pts</button>
                 </form>
               </li>
             ))}

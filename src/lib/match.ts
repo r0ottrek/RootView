@@ -38,10 +38,23 @@ export interface Candidate {
 
 export interface MatchResult { credit: Candidate[]; suggestions: Candidate[] }
 
+// The same names are compared many times in one run, and normalizing them is the slow part.
+const normCache = new Map<string, string>();
+function normC(s: string | null | undefined): string {
+  const k = s ?? '';
+  let v = normCache.get(k);
+  if (v === undefined) {
+    if (normCache.size > 5000) normCache.clear();
+    v = normName(k);
+    normCache.set(k, v);
+  }
+  return v;
+}
+
 /** How alike two people's names are, 0–100. Handles "John S.", "J. Smith", "johnsmith". */
 export function nameScore(a: string, b: string): number {
-  const ta = normName(a).split(' ').filter(Boolean);
-  const tb = normName(b).split(' ').filter(Boolean);
+  const ta = normC(a).split(' ').filter(Boolean);
+  const tb = normC(b).split(' ').filter(Boolean);
   if (!ta.length || !tb.length) return 0;
   if (ta.join(' ') === tb.join(' ')) return ta.length > 1 ? 100 : 65;
   if (ta.join('') === tb.join('')) return 85; // "johnsmith" vs "john smith"
@@ -96,16 +109,17 @@ export function mentionedTechs(body: string, techs: TechLite[]): Map<string, { w
   const byName = new Map<string, Set<string>>();
   // Someone who has left can still be credited through their tag visits, but a name in a new review means a current tech.
   for (const t of techs.filter((x) => x.active !== 0)) {
-    const names = [t.first_name, ...t.aliases.split(',')].map((n) => normName(n)).filter((n) => n.length >= 3);
+    const names = [t.first_name, ...t.aliases.split(',')].map((n) => normC(n)).filter((n) => n.length >= 3);
     for (const n of names) {
       if (!byName.has(n)) byName.set(n, new Set());
       byName.get(n)!.add(t.id);
     }
   }
-  const norm = ` ${normName(body)} `;
+  // "Maya's work" names Maya too.
+  const text = ` ${normName(body.replace(/(\p{L})['’]s\b/gu, '$1'))} `;
   const out = new Map<string, { word: string; ambiguous: boolean }>();
   for (const [n, ids] of byName) {
-    if (!norm.includes(` ${n} `)) continue;
+    if (!text.includes(` ${n} `)) continue;
     if (WORD_NAMES.has(n)) {
       const cap = n[0].toUpperCase() + n.slice(1);
       if (!new RegExp(`\\b${cap}\\b`).test(body)) continue;
@@ -180,8 +194,15 @@ export function matchReview(review: ReviewLite, techs: TechLite[], taps: TapLite
   }
 
   const ranked = [...best.values()].sort((a, b) => b.score - a.score);
+  const auto = ranked.filter((c) => c.score >= AUTO_CREDIT);
+  // Two techs' customers have similar names and the review names neither: the name can't say whose visit it was,
+  // so the office decides (unless one is far more likely). One customer who rated two techs (a crew) credits both.
+  const tapName = new Map(taps.map((t) => [t.id, normC(t.customer_name)]));
+  const byName = auto.filter((c) => !c.mentioned && c.tap_id);
+  const customers = new Set(byName.map((c) => tapName.get(c.tap_id!)));
+  const unsure = customers.size < 2 ? [] : byName[0].score - byName[1].score >= 25 ? byName.slice(1) : byName;
   return {
-    credit: ranked.filter((c) => c.score >= AUTO_CREDIT),
-    suggestions: ranked.filter((c) => c.score >= SUGGEST && c.score < AUTO_CREDIT),
+    credit: auto.filter((c) => !unsure.includes(c)),
+    suggestions: [...unsure, ...ranked.filter((c) => c.score >= SUGGEST && c.score < AUTO_CREDIT)],
   };
 }

@@ -14,7 +14,7 @@ import {
 import { Doc, back, render } from '../../views/layout';
 import { ReviewCard, creditsFor } from '../../views/review';
 import { Avatar, Chip, Empty, Icon, Stars, Stat } from '../../views/ui';
-import { SOURCE_LABEL, page, type Ctx } from './common';
+import { POINTS_CAP, SOURCE_LABEL, adjustPoints, page, pointsProblem, type Ctx } from './common';
 
 const team = new Hono<AppEnv>();
 
@@ -115,7 +115,7 @@ function TechForm({ t, error, action, locations }: { t: Partial<Tech>; error?: s
         {t.photo && <label class="check"><input type="checkbox" name="remove_photo" value="1" /> Remove photo</label>}
         <p class="hint">Square, face centered. Resized on this device before upload.</p></div>
       <div class="field"><label for="sort">List order</label><input id="sort" name="sort" type="number" min={0} max={999} value={String(t.sort ?? 100)} /></div>
-      <label class="check field--wide"><input type="checkbox" name="active" value="1" checked={t.active !== 0} /> Active. Inactive techs can't sign in, and their tags show the "who helped you" list instead.</label>
+      <label class="check field--wide"><input type="checkbox" name="active" value="1" checked={t.active !== 0} /> Active. Inactive techs can't sign in, and their tags open a page that sends customers to the "who helped you" list.</label>
       <div class="form-actions field--wide"><button class="btn btn--red" type="submit">Save</button><a class="btn btn--ghost" href={t.id ? `/admin/team/${t.id}` : '/admin/team'}>Cancel</a></div>
     </form>
   );
@@ -237,14 +237,13 @@ team.post('/:id/points', async (c) => {
   const b = await c.req.parseBody();
   const id = c.req.param('id');
   // Managers can hand out small bonuses; bigger changes to someone's balance are an owner's call.
-  const cap = c.get('admin').role === 'owner' ? 10_000 : 100;
+  const cap = c.get('admin').role === 'owner' ? POINTS_CAP.owner : POINTS_CAP.manager;
   const amount = clampInt(b.amount, -cap, cap, 0);
   const reason = line(b.reason, 120) || (amount > 0 ? 'Bonus from the office' : 'Adjustment');
   if (!amount) return c.redirect(back(`/admin/team/${id}`, { err: `Enter a number of points between -${cap} and ${cap}.` }) + '#points', 303);
-  const res = await run(c.env.DB,
-    `INSERT INTO points (id, tech_id, amount, reason, created_by, created_at) SELECT ?, id, ?, ?, ?, ? FROM techs WHERE id = ?`,
-    newId('pt'), amount, reason, c.get('admin').name, now(), id);
-  if (!res.meta.changes) return c.redirect('/admin/team', 303);
+  const res = await adjustPoints(c, id, amount, reason);
+  if (res === 'no-tech') return c.redirect('/admin/team', 303);
+  if (res !== 'ok') return c.redirect(back(`/admin/team/${id}`, { err: pointsProblem(res) }) + '#points', 303);
   await audit(c, 'points.adjust', `${amount > 0 ? '+' : ''}${amount} for ${id}: ${reason}`);
   return c.redirect(back(`/admin/team/${id}`, { ok: `${amount > 0 ? '+' : ''}${amount} points recorded.` }) + '#points', 303);
 });
@@ -265,8 +264,8 @@ async function detail(c: Ctx, t: Tech, extra: { newLink?: string; editError?: st
     scalar(c.env.DB, `SELECT COALESCE(MAX(last_seen_at), 0) FROM sessions WHERE kind = 'tech' AND subject_id = ?`, t.id),
   ]);
   const credits = await creditsFor(c.env.DB, reviews.map((r) => r.id));
-  const nfc = tagUrl(s, t.slug, 'nfc');
-  const qr = tagUrl(s, t.slug, 'qr');
+  const nfc = tagUrl(s, t.slug, 'nfc', new URL(c.req.url).origin);
+  const qr = tagUrl(s, t.slug, 'qr', new URL(c.req.url).origin);
   const local = `${new URL(c.req.url).origin}/${t.slug}`;
   const company = companyName(s);
   const message = extra.newLink
@@ -426,7 +425,7 @@ async function detail(c: Ctx, t: Tech, extra: { newLink?: string; editError?: st
 team.get('/:id/qr.svg', async (c) => {
   const t = await one<Tech>(c.env.DB, `SELECT slug FROM techs WHERE id = ?`, c.req.param('id'));
   if (!t) return c.notFound();
-  return c.body(qrSvg(tagUrl(c.get('settings'), t.slug, 'qr'), { size: 1024, border: 4 }), 200, {
+  return c.body(qrSvg(tagUrl(c.get('settings'), t.slug, 'qr', new URL(c.req.url).origin), { size: 1024, border: 4 }), 200, {
     'content-type': 'image/svg+xml; charset=utf-8',
     'content-disposition': `attachment; filename="review-${t.slug}.svg"`,
   });
@@ -436,8 +435,8 @@ team.get('/:id/card', async (c) => {
   const t = await one<Tech>(c.env.DB, `SELECT * FROM techs WHERE id = ?`, c.req.param('id'));
   if (!t) return c.notFound();
   const s = c.get('settings');
-  const qr = tagUrl(s, t.slug, 'qr');
-  const short = tagUrl(s, t.slug, 'link').replace(/^https?:\/\//, '');
+  const qr = tagUrl(s, t.slug, 'qr', new URL(c.req.url).origin);
+  const short = tagUrl(s, t.slug, 'link', new URL(c.req.url).origin).replace(/^https?:\/\//, '');
   return render(c, (
     <Doc title={`Review card · ${t.name}`} bodyClass="print">
       <main id="main" class="print__sheet">

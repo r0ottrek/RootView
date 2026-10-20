@@ -362,6 +362,11 @@ test('the owner invites an office manager, who can work but not change settings'
 test("a manager's points adjustments are capped", async () => {
   await post('/admin/rewards/adjust', { tech: TECH.diego, amount: '5000', reason: 'Big bonus' }, manager);
   assert.match(await get(`/admin/team/${TECH.diego}`, admin), /Big bonus[\s\S]{0,400}\+100</);
+  // 300 in 24 hours at most: two more go through, the fourth is refused.
+  await post('/admin/rewards/adjust', { tech: TECH.diego, amount: '100', reason: 'Second' }, manager);
+  await post('/admin/rewards/adjust', { tech: TECH.diego, amount: '100', reason: 'Third' }, manager);
+  const fourth = await post('/admin/rewards/adjust', { tech: TECH.diego, amount: '100', reason: 'Fourth' }, manager);
+  assert.match(decodeURIComponent(fourth.headers.get('location') ?? '').replace(/\+/g, ' '), /up to 300 points in 24 hours/);
 });
 
 // ---------- two-step sign-in ----------
@@ -370,9 +375,10 @@ test('two-step sign-in: set up, required at sign-in, and a code works only once'
   const setup = await (await post('/admin/account/2fa/start', {}, admin)).text();
   const secret = setup.match(/data-copy="([A-Z2-7]{16,})"/)?.[1];
   assert.ok(secret, 'setup shows the key');
-  assert.equal((await post('/admin/account/2fa/confirm', { code: '000000' }, admin)).status, 422);
+  assert.equal((await post('/admin/account/2fa/confirm', { code: '000000', password: OWNER.password }, admin)).status, 422);
   const code = await totpCode(secret, stepAt(Date.now()));
-  assert.equal((await post('/admin/account/2fa/confirm', { code }, admin)).status, 303);
+  assert.equal((await post('/admin/account/2fa/confirm', { code, password: 'not-my-password' }, admin)).status, 422, 'turning it on needs the password too');
+  assert.equal((await post('/admin/account/2fa/confirm', { code, password: OWNER.password }, admin)).status, 303);
 
   const ip = { 'cf-connecting-ip': '198.51.100.20' };
   const first = await post('/admin/login', { email: OWNER.email, password: OWNER.password }, '', ip);

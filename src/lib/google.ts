@@ -48,6 +48,7 @@ export function authUrl(env: Env, redirectUri: string, state: string, codeChalle
 export async function revokeToken(token: string): Promise<void> {
   await fetch('https://oauth2.googleapis.com/revoke', {
     method: 'POST',
+    signal: AbortSignal.timeout(15_000),
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ token }),
   }).catch(() => undefined);
@@ -56,6 +57,7 @@ export async function revokeToken(token: string): Promise<void> {
 async function tokenRequest(env: Env, body: Record<string, string>): Promise<{ access_token: string; refresh_token?: string; email?: string }> {
   const res = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
+    signal: AbortSignal.timeout(15_000),
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID ?? '', client_secret: env.GOOGLE_CLIENT_SECRET ?? '', ...body }),
   });
@@ -85,7 +87,7 @@ export async function accessToken(env: Env, refreshToken: string): Promise<strin
 }
 
 async function gget<T>(token: string, url: string): Promise<T> {
-  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` } });
+  const res = await fetch(url, { headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(15_000) });
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
     throw new Error(`Google API ${res.status}: ${detail.slice(0, 240)}`);
@@ -131,6 +133,7 @@ export async function listReviews(token: string, account: string, location: stri
 export async function putReply(token: string, reviewName: string, comment: string): Promise<void> {
   const res = await fetch(`https://mybusiness.googleapis.com/v4/${reviewName}/reply`, {
     method: 'PUT',
+    signal: AbortSignal.timeout(15_000),
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
     body: JSON.stringify({ comment }),
   });

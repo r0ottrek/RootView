@@ -4,11 +4,11 @@ import { createContext, useContext } from 'hono/jsx';
 import type { Child, FC, PropsWithChildren } from 'hono/jsx';
 import type { AdminUser, AppEnv, Tech } from '../env';
 import { DEFAULTS, companyName, type Settings } from '../lib/settings';
-import { telHref } from '../lib/util';
+import { initials, telHref } from '../lib/util';
 import { Avatar, Icon } from './ui';
 
 /** Cache-buster for styles.css and app.js. Bump it (with package.json "version") in every release that changes them. */
-export const ASSET_V = '1.0.0';
+export const ASSET_V = '1.2.0';
 
 /** The request's settings, available to every component while a page renders (company name, theme, logo). */
 const SettingsContext = createContext<Settings>(DEFAULTS);
@@ -65,13 +65,14 @@ export const Doc: FC<PropsWithChildren<{ title: string; bodyClass?: string; app?
         {app === 'tech' && <link rel="manifest" href="/manifest.webmanifest" />}
         {app === 'tech' && <meta name="apple-mobile-web-app-capable" content="yes" />}
         {app === 'tech' && <meta name="apple-mobile-web-app-title" content={companyName(s)} />}
-        <link rel="preload" href="/fonts/manrope.woff2" as="font" type="font/woff2" crossorigin="" />
+        <link rel="preload" href="/fonts/plex-sans.woff2" as="font" type="font/woff2" crossorigin="" />
         <link rel="stylesheet" href={`/styles.css?v=${ASSET_V}`} />
         <link rel="stylesheet" href={`/theme.css?v=${themeVersion(s)}`} />
       </head>
       <body class={bodyClass ?? ''}>
         <a class="skip-link" href="#main">Skip to content</a>
         {children}
+        <p class="sr-only" id="live" role="status" aria-live="polite"></p>
         <script src={`/app.js?v=${ASSET_V}`} defer></script>
       </body>
     </html>
@@ -102,8 +103,8 @@ export const Brand: FC<{ small?: boolean; href?: string }> = ({ small, href }) =
 
 export const FlashBar: FC<{ flash: Flash }> = ({ flash }) => (
   <>
-    {flash.ok && <div class="flash flash--ok" role="status"><Icon name="check" /> {flash.ok}</div>}
-    {flash.err && <div class="flash flash--err" role="alert"><Icon name="alert" /> {flash.err}</div>}
+    {flash.ok && <div class="flash flash--ok" role="status" tabindex={-1} data-flash><Icon name="check" /> {flash.ok}</div>}
+    {flash.err && <div class="flash flash--err" role="alert" tabindex={-1} data-flash><Icon name="alert" /> {flash.err}</div>}
   </>
 );
 
@@ -114,7 +115,7 @@ export const PublicPage: FC<PropsWithChildren<{ title: string; s: Settings }>> =
   return (
     <Doc title={title} bodyClass="pub">
       <header class="pub__head"><Brand /></header>
-      <main id="main" class="pub__main">{children}</main>
+      <main id="main" class="pub__main" tabindex={-1}>{children}</main>
       <footer class="pub__foot">
         <p>{companyName(s)}{s.office_phone && <> · <a href={telHref(s.office_phone)}>{s.office_phone}</a></>}</p>
         {(site || s.privacy_url) && (
@@ -151,31 +152,35 @@ export const AdminShell: FC<PropsWithChildren<{
 }>> = ({ title, active, admin, s, counts, flash, actions, lede, children }) => (
   <Doc title={`${title} · ${companyName(s)}`} bodyClass="adm" app="admin">
     <div class="adm__frame">
-      <aside class="adm__side" aria-label="Main">
-        <Brand small href="/admin" />
-        <nav class="adm__nav">
+      <div class="adm__side">
+        <div class="adm__brand"><Brand small href="/admin" /></div>
+        <nav class="adm__nav" aria-label="Main">
           {NAV.map((n) => {
             const count = n.badge && counts ? counts[n.badge] : 0;
             return (
               <a href={n.href} class={`adm__link ${active === n.key ? 'is-active' : ''}`} aria-current={active === n.key ? 'page' : undefined}>
-                <Icon name={n.icon} />
-                <span>{n.label}</span>
-                {count > 0 && <span class={`badge ${n.badge === 'low' || n.badge === 'redemptions' ? 'badge--urgent' : ''}`} aria-label={`${count} need attention`}>{count > 99 ? '99+' : count}</span>}
+                <Icon name={n.icon} size={16} />
+                <span class="adm__label">{n.label}</span>
+                {count > 0 && <span class={`badge ${n.badge === 'low' || n.badge === 'redemptions' ? 'badge--urgent' : ''}`}><span aria-hidden="true">{count > 99 ? '99+' : count}</span><span class="sr-only">, {count} need attention</span></span>}
               </a>
             );
           })}
         </nav>
         <div class="adm__me">
-          <span class="dim small">Signed in as</span>
-          <a href="/admin/account"><strong>{admin.name}</strong></a>
-          <form method="post" action="/admin/logout"><button class="linkbtn small" type="submit">Sign out</button></form>
+          <a href="/admin/account" class={`adm__user ${active === 'account' ? 'is-active' : ''}`} title="Your account" aria-label={`Your account: ${admin.name}`} aria-current={active === 'account' ? 'page' : undefined}>
+            <span class="adm__avatar" aria-hidden="true">{initials(admin.name)}</span>
+            <span class="adm__who"><strong>{admin.name}</strong><span>{admin.role === 'owner' ? 'Owner' : 'Office manager'}</span></span>
+          </a>
+          <form method="post" action="/admin/logout">
+            <button class="iconbtn" type="submit" title="Sign out" aria-label="Sign out"><Icon name="logout" size={16} /></button>
+          </form>
         </div>
-      </aside>
-      <main id="main" class="adm__main">
+      </div>
+      <main id="main" class="adm__main" tabindex={-1}>
         {s.demo && (
           <div class="demo-bar">
-            <strong>Demo data.</strong> Customers, taps and reviews here are made up so you can click around.
-            <form method="post" action="/admin/demo/clear" data-confirm="Delete all demo taps, reviews and points? Your team and settings stay."><button class="linkbtn" type="submit">Clear demo data</button></form>
+            <span><strong>Demo data</strong> · customers, taps and reviews here are made up so you can click around.</span>
+            <form method="post" action="/admin/demo/clear" data-confirm="Delete all demo taps, reviews, points and rewards? Your team and settings stay."><button class="linkbtn" type="submit">Clear demo data</button></form>
           </div>
         )}
         <header class="adm__head">
@@ -205,7 +210,7 @@ export const TechShell: FC<PropsWithChildren<{ title: string; tech: Tech; active
         </a>
         <img src={`/asset/icon-192.png?v=${s.brand.version}`} width="36" height="36" alt={companyName(s)} class="me__mark" />
       </header>
-      <main id="main" class="me__main">
+      <main id="main" class="me__main" tabindex={-1}>
         {flash && <FlashBar flash={flash} />}
         {children}
       </main>

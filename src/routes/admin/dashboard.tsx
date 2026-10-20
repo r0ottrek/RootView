@@ -21,9 +21,9 @@ const PERIODS = [
 
 dash.get('/', async (c) => {
   const s = c.get('settings');
-  // Keep matching current even between 15-minute runs (cheap: one batch, a handful of queries).
-  // Demo mode drains the whole backlog at once; locally there is no per-request query limit.
-  let pending = await processPending(c.env, s, 50);
+  // Keep matching current even between 15-minute runs: a few reviews at a time, inside the per-request CPU budget.
+  // Demo mode drains the whole backlog at once; locally there is no per-request limit.
+  let pending = await processPending(c.env, s, s.demo ? 50 : 8);
   for (let i = 0; s.demo && pending.remaining > 0 && i < 30; i++) pending = await processPending(c.env, s, 50);
   const period = parsePeriod(c.req.query('p'));
   const range = periodRange(period, s.timezone);
@@ -57,16 +57,25 @@ dash.get('/', async (c) => {
     title: 'Dashboard',
     active: 'dashboard',
     lede: `${range.label}. Reviews from Google, Yelp and BBB, matched to the tech who earned them.`,
-    actions: <Seg current={period} items={PERIODS.map((p) => ({ ...p, href: `/admin?p=${p.key}` }))} />,
+    actions: <Seg label="Period" current={period} items={PERIODS.map((p) => ({ ...p, href: `/admin?p=${p.key}` }))} />,
   }, (
     <>
       {todo > 0 && (
-        <section class="card setup-list" aria-label="Getting started">
-          <div class="row-between"><h2 class="h-sm">Getting started</h2><span class="small dim">{steps.length - todo} of {steps.length} done</span></div>
-          <ol class="plain stack-xs" role="list">
+        <section class="card setup" aria-label="Finish setting up">
+          <div class="setup__head">
+            <div>
+              <h2 class="h-sm">Finish setting up</h2>
+              <p class="small muted">{steps.length - todo} of {steps.length} done</p>
+            </div>
+            <div class="setup__bar" role="progressbar" aria-label="Setup progress" aria-valuemin={0} aria-valuemax={steps.length} aria-valuenow={steps.length - todo} aria-valuetext={`${steps.length - todo} of ${steps.length} steps done`}>
+              <span style={`width:${Math.round(((steps.length - todo) / steps.length) * 100)}%`} />
+            </div>
+          </div>
+          <ol class="setup__list" role="list">
             {steps.map((x) => (
               <li class={x.done ? 'is-done' : ''}>
-                <Icon name={x.done ? 'check' : 'arrow'} size={16} /> {x.done ? <span>{x.label}</span> : <a href={x.href}>{x.label}</a>}
+                <span class="setup__check" aria-hidden="true">{x.done && <Icon name="check" size={12} />}</span>
+                {x.done ? <span>{x.label}<span class="sr-only"> (done)</span></span> : <a href={x.href}>{x.label}<Icon name="chevron" size={14} /></a>}
               </li>
             ))}
           </ol>

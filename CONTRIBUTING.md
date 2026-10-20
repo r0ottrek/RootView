@@ -21,7 +21,7 @@ npm test        # unit tests + end-to-end run
 
 ## How the code is laid out
 
-- `src/routes/` holds the pages. Each is server-rendered JSX (Hono). Every page must work with JavaScript turned off; `public/app.js` only adds conveniences.
+- `src/routes/` holds the pages. Each is server-rendered JSX (Hono). Every page must work with JavaScript turned off (image uploads are the one exception: they're resized in the browser); `public/app.js` only adds conveniences.
 - `src/lib/` holds the logic, kept free of HTML so it's easy to test.
 - `public/styles.css` uses theme tokens only (`var(--action)`, `var(--bg-1)`, …). Don't add raw colors; the owner's theme couldn't change them.
 - Schema changes go in a new file in `migrations/` (`0002_….sql`, and so on). Never edit a migration that has been released.
