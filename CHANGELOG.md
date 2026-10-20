@@ -2,6 +2,12 @@
 
 What changed in each release. Upgrading? Pull the new code, then run `npm install`, `npm run db:migrate:remote` and `npm run deploy` (see the README's "Updating later").
 
+## 1.3.0 (2026-10-20)
+
+### Changed
+
+- **Credit a whole crew at once.** "Credit to…" is now a list of tick boxes, on the review list, the review page and "Add a review", so any number of techs can share a review in one go (each gets full credit and points). Before, you could pick two at a time.
+
 ## 1.2.0 (2026-10-20)
 
 ### Added

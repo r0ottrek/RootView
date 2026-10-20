@@ -303,7 +303,7 @@ Every review is scored on three clues:
 2. **Timing.** How soon after the tag visit the review was posted, and whether the customer pressed that site's button.
 3. **Mention.** The review names the tech ("Maya was great"). Nicknames can be added for each tech.
 
-A score of 80 or more credits the tech automatically. From 40 to 79, the review waits under **Reviews → Needs a tech** with a one-click "Credit Maya · likely" button. Every credit shows its evidence. A crew of two can share a review, and both techs get full credit.
+A score of 80 or more credits the tech automatically. From 40 to 79, the review waits under **Reviews → Needs a tech** with a one-click "Credit Maya · likely" button. Every credit shows its evidence. A whole crew can share a review: tick everyone who worked the job, and each tech gets full credit and points.
 
 The rules are in `src/lib/match.ts`, covered by `test/match.test.mjs`.
 

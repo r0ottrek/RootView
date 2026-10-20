@@ -168,25 +168,26 @@ export async function rematchUnassigned(env: Env, s: Settings) {
 
 // ---------- manual crediting ----------
 
-/** Credits one or more techs (a crew of two shares a review; each gets the full points). Techs already credited are re-stamped as manual. */
+/**
+ * Credits one or more techs: a whole crew can share a review, and each gets full credit and points. Techs already
+ * credited are re-stamped as manual. Four statements however many techs, inside the per-request query limit.
+ */
 export async function creditReview(env: Env, s: Settings, reviewId: string, techIds: string | string[], by: string): Promise<void> {
   const db = env.DB;
   const ids = [...new Set(Array.isArray(techIds) ? techIds : [techIds])].filter(Boolean);
   const r = await one<ReviewRow>(db, `SELECT * FROM reviews WHERE id = ?`, reviewId);
   const techs = ids.length ? await all<TechLite>(db, `SELECT id, name, first_name, aliases FROM techs WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(ids)) : [];
   if (!r || !techs.length) throw new Error('Review or tech not found');
-  const batch: D1PreparedStatement[] = [];
-  for (const t of techs) {
-    const mentioned = mentionedTechs(r.body, [t]).has(t.id);
-    const pts = pointsForCredit(s, r, t.id, mentioned, by);
-    batch.push(
-      stmt(db, `INSERT INTO credits (review_id, tech_id, method, score, evidence, created_by, created_at) VALUES (?, ?, 'manual', 100, ?, ?, ?)
-        ON CONFLICT (review_id, tech_id) DO UPDATE SET method = 'manual', evidence = excluded.evidence, created_by = excluded.created_by`,
-        r.id, t.id, `Credited by ${by}`, by, now()),
-      stmt(db, `DELETE FROM points WHERE review_id = ? AND tech_id = ?`, r.id, t.id),
-    );
-    if (pts.length) batch.push(insertPoints(db, pts));
-  }
+  const list = JSON.stringify(techs.map((t) => t.id));
+  const pts = techs.flatMap((t) => pointsForCredit(s, r, t.id, mentionedTechs(r.body, [t]).has(t.id), by));
+  const batch: D1PreparedStatement[] = [
+    stmt(db, `INSERT INTO credits (review_id, tech_id, method, score, evidence, created_by, created_at)
+      SELECT ?1, value, 'manual', 100, ?2, ?3, ?4 FROM json_each(?5) WHERE true
+      ON CONFLICT (review_id, tech_id) DO UPDATE SET method = 'manual', evidence = excluded.evidence, created_by = excluded.created_by`,
+      r.id, `Credited by ${by}`, by, now(), list),
+    stmt(db, `DELETE FROM points WHERE review_id = ? AND tech_id IN (SELECT value FROM json_each(?))`, r.id, list),
+  ];
+  if (pts.length) batch.push(insertPoints(db, pts));
   batch.push(stmt(db, `UPDATE reviews SET status = 'credited' WHERE id = ?`, r.id));
   await db.batch(batch);
 }

@@ -523,9 +523,16 @@ a.rev:hover, .rev:has(> a:hover) { border-color: var(--line-2); }
 .rev__credits { display: flex; flex-wrap: wrap; gap: 6px; }
 .rev__reply { padding: 2px 0 2px 12px; border-left: 2px solid var(--line-2); display: grid; gap: 2px; font-size: var(--fs-base); color: var(--text-2); }
 .rev__actions { display: flex; flex-wrap: wrap; gap: 8px 10px; align-items: center; padding-top: 12px; border-top: 1px solid var(--line); }
-.credit-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.credit-form select { width: 176px; height: 30px; font-size: var(--fs-sm); padding-left: 9px; background-color: var(--bg); }
-.credit-form .btn { height: 30px; }
+.techpick { border: 0; padding: 0; margin: 0; min-width: 0; }
+.techpick__legend { padding: 0; margin-bottom: 6px; font-size: var(--fs-sm); font-weight: 500; color: var(--text); }
+.techpick__list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr)); gap: 0 14px; }
+.techpick__list .check { min-height: 32px; font-size: var(--fs-sm); }
+.credit-pick { position: relative; }
+.credit-pick > summary { list-style: none; }
+.credit-pick > summary::-webkit-details-marker { display: none; }
+.credit-pick[open] > summary { background: var(--bg-3); border-color: var(--line-3); }
+.credit-pick__menu { position: absolute; z-index: 20; top: calc(100% + 6px); left: 0; width: min(300px, 82vw); padding: 12px; display: grid; gap: 10px; background: var(--bg-1); border: 1px solid var(--line-2); border-radius: var(--r-md); box-shadow: var(--shadow-pop); }
+.credit-pick__menu .techpick__list { grid-template-columns: 1fr; max-height: 264px; overflow-y: auto; overscroll-behavior: contain; }
 .rev__links { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 6px 16px; align-items: center; }
 .rev__links a, .rev__links .linkbtn { color: var(--text-2); font-weight: 500; font-size: var(--fs-sm); }
 .rev__links a:hover, .rev__links .linkbtn:hover { color: var(--ink); }

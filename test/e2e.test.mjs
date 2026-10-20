@@ -229,6 +229,16 @@ test('removing a credit also removes the points', async () => {
   assert.match(await get(`/admin/team/${TECH.maya}`, admin), /Points balance<\/span><span class="stat__value tnum">0</);
 });
 
+test('a whole crew of four can be credited in one go, each with full points', async () => {
+  const res = await post('/admin/reviews/new', { platform: 'bbb', date: today(), reviewer: 'Robin Vance', rating: '4', body: 'Big remodel, everyone was great.', tech: '' }, admin);
+  const id = res.headers.get('location').match(/\/admin\/reviews\/(r_[^?]+)/)[1];
+  const crew = [TECH.maya, TECH.diego, TECH.priya, TECH.sam];
+  const credit = await post(`/admin/reviews/${id}/credit`, new URLSearchParams(crew.map((t) => ['tech', t])), admin);
+  assert.match(flashIn(credit), /Credited to Diego, Maya, Priya and Sam/);
+  const credits = (await get(`/admin/reviews/${id}`, admin)).match(/class="plain credit-list"[\s\S]*?<\/ul>/)?.[0] ?? '';
+  for (const name of ['Maya Okonkwo', 'Diego Alvarez', 'Priya Raman', 'Sam Whitfield']) assert.match(credits, new RegExp(name));
+});
+
 test('"Who helped you today?" search filters and highlights names without scripts', async () => {
   const html = await get('/?q=may');
   assert.match(html, /<mark>May<\/mark>a Okonkwo/);

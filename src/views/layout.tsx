@@ -8,7 +8,7 @@ import { initials, telHref } from '../lib/util';
 import { Avatar, Icon } from './ui';
 
 /** Cache-buster for styles.css and app.js. Bump it (with package.json "version") in every release that changes them. */
-export const ASSET_V = '1.2.0';
+export const ASSET_V = '1.3.0';
 
 /** The request's settings, available to every component while a page renders (company name, theme, logo). */
 const SettingsContext = createContext<Settings>(DEFAULTS);

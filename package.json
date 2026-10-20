@@ -1,6 +1,6 @@
 {
   "name": "rootview",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Self-hosted review tracking for field-service teams: an NFC tag or QR code per technician, Google review matching, a leaderboard, rewards, and a separate app for techs. Runs free on Cloudflare.",
   "license": "MIT",
   "repository": {

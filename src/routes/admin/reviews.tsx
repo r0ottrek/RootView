@@ -19,9 +19,24 @@ const rev = new Hono<AppEnv>();
 interface TechOpt { id: string; name: string; first_name: string; active: number }
 const techOptions = (c: Ctx) => all<TechOpt>(c.env.DB, `SELECT id, name, first_name, active FROM techs ORDER BY active DESC, sort, name`);
 
-/** Every tech picked in a form: credit forms can carry several `tech` fields (a crew of two shares a review). */
+/** Every tech ticked in a form: credit forms carry one `tech` field per tech (a whole crew can share a review). */
 const pickedTechs = (b: Record<string, unknown>): string[] =>
-  [...new Set((Array.isArray(b.tech) ? b.tech : [b.tech]).map((v) => str(v, 40)).filter(Boolean))].slice(0, 6);
+  [...new Set((Array.isArray(b.tech) ? b.tech : [b.tech]).map((v) => str(v, 40)).filter(Boolean))].slice(0, 25);
+
+/** "Maya", "Maya and Diego", "Maya, Diego and Sam". */
+const listNames = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0] ?? '');
+
+/** Tick any number of techs. Works without JavaScript: each ticked box sends one `tech` field. */
+const TechChecklist = ({ techs, checked, legend, showLegend }: { techs: TechOpt[]; checked?: Set<string>; legend: string; showLegend?: boolean }) => (
+  <fieldset class="techpick">
+    <legend class={showLegend ? 'techpick__legend' : 'sr-only'}>{legend}</legend>
+    <ul class="techpick__list" role="list">
+      {techs.map((t) => (
+        <li><label class="check"><input type="checkbox" name="tech" value={t.id} checked={checked?.has(t.id)} /> {t.name}</label></li>
+      ))}
+    </ul>
+  </fieldset>
+);
 
 const FILTERS: Record<string, { label: string; where: string }> = {
   unassigned: { label: 'Needs a tech', where: `r.status = 'unassigned'` },
@@ -113,16 +128,15 @@ function QuickActions({ r, credits, techs, techName, ret }: { r: ReviewRow; cred
         </form>
       ))}
       {r.status !== 'not_tech' && open.length > 0 && (
-        <form method="post" action={`/admin/reviews/${r.id}/credit`} class="credit-form">
-          <input type="hidden" name="back" value={ret} />
-          <label class="sr-only" for={`t-${r.id}`}>{first ? 'Credit to' : 'Also credit'}</label>
-          <select id={`t-${r.id}`} name="tech" required><option value="">{first ? 'Credit to…' : 'Also credit…'}</option>{open.map((t) => <option value={t.id}>{t.name}</option>)}</select>
-          {first && <>
-            <label class="sr-only" for={`t2-${r.id}`}>And a second tech (optional)</label>
-            <select id={`t2-${r.id}`} name="tech"><option value="">and… (optional)</option>{open.map((t) => <option value={t.id}>{t.name}</option>)}</select>
-          </>}
-          <button class="btn btn--ghost btn--sm" type="submit">Credit</button>
-        </form>
+        <details class="credit-pick">
+          <summary class="btn btn--ghost btn--sm">{first ? 'Credit to…' : 'Also credit…'}<Icon name="chevron" size={14} /></summary>
+          <form method="post" action={`/admin/reviews/${r.id}/credit`} class="credit-pick__menu">
+            <input type="hidden" name="back" value={ret} />
+            <TechChecklist techs={open} legend={`Techs to credit for ${r.reviewer_name || 'this review'}`} />
+            <p class="fine">Tick everyone who worked the job. Each gets full credit and points.</p>
+            <button class="btn btn--red btn--sm" type="submit">Credit selected</button>
+          </form>
+        </details>
       )}
       <span class="rev__links">
         {r.status === 'unassigned' && (
@@ -165,12 +179,11 @@ rev.get('/new', async (c) => {
       <div class="field"><label for="rating">Stars</label>
         <select id="rating" name="rating"><option value="">No stars on this site</option>{[5, 4, 3, 2, 1].map((n) => <option value={String(n)}>{n}</option>)}</select></div>
       <div class="field field--wide"><label for="body">Review text</label><textarea id="body" name="body" rows={5} maxlength={5000}></textarea></div>
-      <div class="field"><label for="tech">Technician</label>
-        <select id="tech" name="tech"><option value="">Match automatically</option>{techs.filter((t) => t.active || t.id === tap?.tech_id).map((t) => <option value={t.id} selected={t.id === tap?.tech_id}>{t.name}</option>)}</select>
-        <p class="hint">{tap ? `Pre-set to ${tap.first_name} from their tag visit.` : 'Leave on automatic to match by name and tag visits, like Google reviews.'}</p></div>
-      <div class="field"><label for="tech2">Second technician <span class="dim">(optional)</span></label>
-        <select id="tech2" name="tech"><option value="">None</option>{techs.filter((t) => t.active).map((t) => <option value={t.id}>{t.name}</option>)}</select>
-        <p class="hint">For a job two techs worked together. Both get full credit and points.</p></div>
+      <div class="field field--wide">
+        <TechChecklist techs={techs.filter((t) => t.active || t.id === tap?.tech_id)} checked={new Set(tap ? [tap.tech_id] : [])} legend="Technicians" showLegend />
+        <p class="hint">{tap
+          ? `${tap.first_name} is ticked from their tag visit. Tick anyone else who worked the job; each gets full credit and points.`
+          : 'Tick everyone who worked the job (each gets full credit and points), or leave them all unticked to match automatically by name and tag visits, like Google reviews.'}</p></div>
       <div class="form-actions field--wide"><button class="btn btn--red" type="submit">Save review</button><a class="btn btn--ghost" href={tap ? '/admin/activity' : '/admin/reviews'}>Cancel</a></div>
     </form>
   ));
@@ -280,16 +293,13 @@ rev.get('/:id', async (c) => {
               ))}
             </div>
           )}
-          <form method="post" action={`/admin/reviews/${r.id}/credit`} class="inline-form mt-sm">
-            <label class="sr-only" for="add-tech">Add credit</label>
-            <select id="add-tech" name="tech" required><option value="">{credits.length ? 'Also credit…' : 'Credit to…'}</option>{open.map((t) => <option value={t.id}>{t.name}</option>)}</select>
-            {!credits.length && <>
-              <label class="sr-only" for="add-tech2">And a second tech (optional)</label>
-              <select id="add-tech2" name="tech"><option value="">and… (optional)</option>{open.map((t) => <option value={t.id}>{t.name}</option>)}</select>
-            </>}
-            <button class="btn btn--ghost btn--sm" type="submit">Credit</button>
-          </form>
-          <p class="fine mt-sm">A job two techs worked together can credit both. Each gets full credit and points.</p>
+          {open.length > 0 && (
+            <form method="post" action={`/admin/reviews/${r.id}/credit`} class="stack-sm mt-sm">
+              <TechChecklist techs={open} legend={credits.length ? 'Also credit' : 'Credit to'} showLegend />
+              <div><button class="btn btn--ghost btn--sm" type="submit">Credit selected</button></div>
+            </form>
+          )}
+          <p class="fine mt-sm">A job several techs worked together can credit them all. Each gets full credit and points.</p>
           <div class="mt-sm">
             {r.status === 'not_tech'
               ? <form method="post" action={`/admin/reviews/${r.id}/status`}><input type="hidden" name="status" value="reopen" /><button class="linkbtn small" type="submit">Put back in the queue</button></form>
@@ -342,7 +352,7 @@ rev.post('/:id/credit', async (c) => {
   await creditReview(c.env, c.get('settings'), id, techIds, c.get('admin').name);
   await audit(c, 'review.credit', `${id} → ${techIds.join(', ')}`);
   const names = await all<{ first_name: string }>(c.env.DB, `SELECT first_name FROM techs WHERE id IN (SELECT value FROM json_each(?)) ORDER BY sort, name`, JSON.stringify(techIds));
-  return c.redirect(back(retTo(b, `/admin/reviews/${id}`), { ok: `Credited to ${names.map((t) => t.first_name).join(' and ') || 'tech'}.` }), 303);
+  return c.redirect(back(retTo(b, `/admin/reviews/${id}`), { ok: `Credited to ${listNames(names.map((t) => t.first_name)) || 'tech'}.` }), 303);
 });
 
 rev.post('/:id/uncredit', async (c) => {

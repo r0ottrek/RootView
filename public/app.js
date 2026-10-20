@@ -56,6 +56,15 @@
     if (ids.length) input.setAttribute('aria-describedby', ids.join(' '));
   });
 
+  // "Credit to…" menus: clicking elsewhere or pressing Escape closes them.
+  document.addEventListener('click', function (e) {
+    $$('details.credit-pick[open]').forEach(function (d) { if (!d.contains(e.target)) d.open = false; });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    $$('details.credit-pick[open]').forEach(function (d) { d.open = false; d.querySelector('summary').focus(); });
+  });
+
   // Busy state for slow actions (AI drafts, Google sync)
   $$('form').forEach(function (form) {
     form.addEventListener('submit', function (e) {
