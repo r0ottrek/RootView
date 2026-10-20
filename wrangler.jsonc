@@ -1,0 +1,18 @@
+{
+  // RootView as a Cloudflare Pages project (advanced mode: dist/_worker.js runs every page).
+  // Before the first deploy: rename the project if you like, then paste the database_id that
+  // `npx wrangler d1 create rootview` prints. See README → "Deploy to Cloudflare".
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rootview",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "rootview",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "migrations"
+    }
+  ]
+}

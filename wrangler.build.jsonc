@@ -1,0 +1,9 @@
+{
+  // Build-only config: lets Cloudflare's own bundler (with its Node.js compatibility layer) produce
+  // dist/_worker.js for Pages. Not deployed as a Worker. Used by scripts/build-pages.mjs.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rootview-build",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"]
+}

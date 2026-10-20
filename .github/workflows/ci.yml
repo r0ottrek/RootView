@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Type check
+        run: npm run check
+      - name: Throwaway local settings for the test run
+        run: |
+          rand() { node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"; }
+          {
+            echo "SETUP_KEY=$(rand)"
+            echo "CRON_SECRET=$(rand)"
+            echo "ENCRYPTION_KEY=$(node -e "console.log(require('crypto').randomBytes(32).toString('base64'))")"
+            echo "DEMO_ADMIN_PASSWORD=$(rand)"
+          } > .dev.vars
+      - name: Tests (unit + end to end)
+        run: npm test
+      - name: Build for Cloudflare Pages
+        run: npm run build
+      - name: End to end against the built worker
+        run: E2E_FROM_DIST=1 node --test test/e2e.test.mjs
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high

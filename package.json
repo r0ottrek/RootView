@@ -1,0 +1,34 @@
+{
+  "name": "rootview",
+  "version": "1.0.0",
+  "description": "Self-hosted review tracking for field-service teams: an NFC tag or QR code per technician, Google review matching, a leaderboard, rewards, and a separate app for techs. Runs free on Cloudflare.",
+  "license": "MIT",
+  "keywords": ["reviews", "google-reviews", "nfc", "qr-code", "field-service", "cloudflare-pages", "cloudflare-d1", "hono"],
+  "scripts": {
+    "dev": "node scripts/dev-node.mjs",
+    "dev:demo": "node scripts/dev-node.mjs --demo",
+    "build": "node scripts/build-pages.mjs",
+    "preview:dist": "npm run build && node scripts/dev-node.mjs --from-dist --demo",
+    "deploy": "npm run build && wrangler pages deploy --no-bundle --branch main --commit-dirty=true",
+    "deploy:cron": "wrangler deploy --config cron/wrangler.jsonc",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "check": "tsc --noEmit",
+    "test": "esbuild src/lib/match.ts src/lib/util.ts src/lib/geo.ts src/lib/theme.ts src/lib/totp.ts src/lib/crypto.ts src/lib/assets.ts --bundle --format=esm --platform=neutral --outdir=.test-build --log-level=warning && node --test --test-concurrency=1 test/*.test.mjs"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.135.0",
+    "hono": "^4.13.13",
+    "uqr": "^0.1.3"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260928.1",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.3"
+  },
+  "private": true
+}

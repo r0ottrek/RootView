@@ -1,0 +1,18 @@
+# Cloudflare Pages applies these to files served straight from public/ (styles, scripts, fonts, default icons).
+# Pages from the app itself set their own headers in src/index.tsx.
+/*
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Resource-Policy: same-origin
+  Content-Security-Policy: default-src 'none'; frame-ancestors 'none'
+
+/fonts/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/static/*
+  Cache-Control: public, max-age=86400
+
+/sw.js
+  Cache-Control: no-cache

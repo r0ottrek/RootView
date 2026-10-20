@@ -1,0 +1,13 @@
+{
+  // The 15-minute scheduler for the review site. Deploy: npm run deploy:cron
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "rootview-cron",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+  "triggers": { "crons": ["*/15 * * * *"] },
+  // Your Pages address. The *.pages.dev one keeps working after you add a custom domain, so it never needs changing.
+  "vars": { "APP_URL": "https://rootview.pages.dev" },
+  // Schedule only: no public address of its own.
+  "workers_dev": false,
+  "observability": { "enabled": true }
+}

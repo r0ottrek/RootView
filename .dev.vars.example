@@ -1,0 +1,31 @@
+# Copy to .dev.vars for local development (never commit .dev.vars).
+# In production, set each one as an encrypted secret instead:  npx wrangler pages secret put NAME
+# Make random values with:  node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+
+# Required. Typed once on /setup to create the first owner. At least 16 random characters.
+SETUP_KEY=
+
+# Required in production. The 15-minute scheduler (cron/) sends it to POST /api/cron. Same value in both places.
+CRON_SECRET=
+
+# Recommended. Encrypts the Google token and two-step sign-in keys stored in the database.
+# Exactly 32 random bytes, base64 (the command above makes one). Keep a copy: without it those values can't be read.
+ENCRYPTION_KEY=
+
+# Optional. Google Business Profile import (Google Cloud console → APIs & Services → Credentials → OAuth client, "Web application").
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+
+# Optional. AI-drafted review replies (console.anthropic.com). AI_MODEL overrides the default model.
+ANTHROPIC_API_KEY=
+AI_MODEL=
+
+# Optional. Email alerts for low ratings and reward requests (resend.com, with your sending domain verified).
+RESEND_API_KEY=
+
+# Optional. Password hashing work factor (PBKDF2-SHA256). Default 20000; Cloudflare allows up to 100000.
+PASSWORD_ITERATIONS=
+
+# Local demo only (npm run dev:demo): the owner login the demo data creates.
+DEMO_ADMIN_EMAIL=owner@demo.test
+DEMO_ADMIN_PASSWORD=
