@@ -8,7 +8,7 @@ import { initials, telHref } from '../lib/util';
 import { Avatar, Icon } from './ui';
 
 /** Cache-buster for styles.css and app.js. Bump it (with package.json "version") in every release that changes them. */
-export const ASSET_V = '1.3.0';
+export const ASSET_V = '1.4.0';
 
 /** The request's settings, available to every component while a page renders (company name, theme, logo). */
 const SettingsContext = createContext<Settings>(DEFAULTS);
@@ -135,6 +135,7 @@ const NAV: { href: string; key: string; label: string; icon: string; badge?: key
   { href: '/admin/reviews', key: 'reviews', label: 'Reviews', icon: 'star', badge: 'unassigned' },
   { href: '/admin/team', key: 'team', label: 'Team', icon: 'users' },
   { href: '/admin/activity', key: 'activity', label: 'Tag activity', icon: 'tap', badge: 'low' },
+  { href: '/admin/links', key: 'links', label: 'Links', icon: 'link' },
   { href: '/admin/rewards', key: 'rewards', label: 'Rewards', icon: 'gift', badge: 'redemptions' },
   { href: '/admin/branding', key: 'branding', label: 'Branding', icon: 'palette' },
   { href: '/admin/settings', key: 'settings', label: 'Settings', icon: 'gear' },

@@ -49,7 +49,8 @@ It's built for plumbers, electricians, HVAC, cleaners, locksmiths, landscapers, 
 - **A page per tech.** The tech's tag or QR code opens a page with their photo. The customer rates the visit and types their name, and Google, Yelp, BBB or Facebook is one tap away.
 - **Reviews matched to the right person.** Google never says which link a reviewer came from, so RootView matches on the name the customer typed, how soon the review followed the visit, and whether the review names the tech. Sure matches are credited automatically; likely ones wait for one click. [How it works](#how-a-review-gets-credited).
 - **A separate app for techs.** Each tech signs in with their own username and password to see their reviews, leaderboard rank, QR code and points, and to request rewards. They can't see the office dashboard or anyone else's customers.
-- **An office dashboard.** Shows reviews per week, a leaderboard, conversion from tap to review, and low ratings to call back. You can reply to Google reviews (with optional AI drafts) and run a rewards catalog.
+- **An office dashboard.** Shows reviews per week, a leaderboard, conversion from tap to review, and low ratings to call back, for a preset period or any dates you pick (From … to …). You can reply to Google reviews (with optional AI drafts) and run a rewards catalog.
+- **Tracking links.** Make a named link and QR code for each place you ask for reviews, like your CRM's automated texts (`/r/crm`), invoice emails or a yard sign, and see how many opens, ratings and reviews each one brings in. [How they work](#tracking-links).
 - **Your brand, set up in the browser.** Upload a logo and app icon, choose a preset or any colors you like, and pick corner style and fonts. A live preview and a built-in readability check show the result. No code needed.
 - **Several locations.** With two or more Google profiles, each customer is sent to the profile for where the job was.
 - **Honest by design.** Every customer sees the review links, whatever rating they give. Hiding them from unhappy customers ("review gating") breaks Google's rules. Unhappy customers are also offered a call-back, so the office can make it right.
@@ -93,8 +94,9 @@ All from the built-in demo (`npm run dev:demo`), where every name and review is 
 |---|---|---|
 | `/<tech>` (e.g. `/maya?s=nfc`) | Customers | Rate the visit and choose a review site. No account needed. |
 | `/` | Customers | "Who helped you today?" search, for a company-wide QR code |
+| `/r/<code>` (e.g. `/r/crm`) | Customers | A [tracking link](#tracking-links): on to the rating page or straight to Google, counted |
 | `/me` | **Technicians** | Their own reviews, rank, QR code, points and rewards. Separate login. |
-| `/admin` | **Office managers** | Reviews, credit, follow-ups, team, tag activity, reward requests |
+| `/admin` | **Office managers** | Reviews, credit, follow-ups, team, tag activity, tracking links, reward requests |
 | `/admin` | **Owners** | All of the above, plus settings, branding, Google, office logins, activity log and privacy requests |
 
 ---
@@ -323,6 +325,27 @@ With two or more Google profiles (Settings → Locations), each customer's Googl
 4. **The main location.**
 
 Each location can add bonus points per review, which helps grow a newer profile.
+
+---
+
+## Tracking links
+
+Tags and QR codes cover the visit itself. For everywhere else you ask for reviews, make a tracking link under **Admin → Links**:
+
+- **Name** it for where it goes ("CRM texts", "Invoice emails", "Yard signs"), and pick a short **address** like `crm` for `/r/crm`. The address never changes, so printed QR codes keep working.
+- **Who it's for:** anyone (the customer picks their tech on "Who helped you today?") or one tech (straight to their page, good for a business card).
+- **Where it sends them:** your rating page first (recommended: the visit can be matched to a review and credited, like a tag tap) or straight to Google (counts opens only).
+
+Paste the link into your CRM's review-request text or your invoice template, or print its QR code (Links → QR code). For each link and period you see:
+
+| | |
+|---|---|
+| **Opened** | People who actually saw the page. Link previews in texting apps and email scanners don't count, and reloads within the hour count once. |
+| **Rated / Avg** | Customers who rated the visit, and their average. |
+| **Clicked** | Customers who went on to a review site. |
+| **Reviews** | Public reviews matched to a visit that came through the link. |
+
+The dashboard's **Where reviews came from** breaks the period's reviews down by link, by how the visit began (tech's tag, tech's QR code, texted link, company QR), or not traced to a visit. Tag activity shows the link on each visit. Hiding a link only tidies the list: the link and its QR code keep working.
 
 ---
 

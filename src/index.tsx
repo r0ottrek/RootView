@@ -19,6 +19,7 @@ import { themeCss } from './lib/theme';
 import account from './routes/admin/account';
 import branding from './routes/admin/branding';
 import dash from './routes/admin/dashboard';
+import links from './routes/admin/links';
 import other from './routes/admin/other';
 import rev from './routes/admin/reviews';
 import team from './routes/admin/team';
@@ -115,6 +116,7 @@ admin.route('/reviews', rev);
 admin.route('/team', team);
 admin.route('/branding', branding);
 admin.route('/account', account);
+admin.route('/links', links);
 admin.route('/', other);
 app.route('/admin', admin);
 

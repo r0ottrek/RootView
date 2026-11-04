@@ -76,10 +76,14 @@
 
   // Count a tag visit only once the page is actually on someone's screen (not when a browser preloads it
   // or a link scanner fetches it). A preloaded page reports when the customer really opens it.
+  // Tracking links count their opens the same way; a link straight to Google moves on once the open is sent.
   $$('form[data-visit]').forEach(function (form) {
     var report = function () {
-      var body = new URLSearchParams({ t: form.elements.t.value, s: form.elements.s.value });
+      var body = new URLSearchParams();
+      $$('input[type="hidden"]', form).forEach(function (input) { if (input.name) body.set(input.name, input.value); });
       try { fetch(form.getAttribute('data-visit'), { method: 'POST', body: body, credentials: 'same-origin', keepalive: true }); } catch (e) { /* the rating still saves the visit */ }
+      var go = form.getAttribute('data-go');
+      if (go) setTimeout(function () { window.location.replace(go); }, 150);
     };
     if (document.prerendering) document.addEventListener('prerenderingchange', report, { once: true });
     else if (document.visibilityState === 'hidden') {

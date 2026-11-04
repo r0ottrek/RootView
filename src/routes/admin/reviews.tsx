@@ -12,7 +12,7 @@ import { HOUR, MINUTE, clampInt, describeGap, fmtDateTime, str, zonedMidnight } 
 import { back } from '../../views/layout';
 import { ReviewCard, creditReason, creditsFor, type CreditView } from '../../views/review';
 import { Empty, Icon, Pager, Stars } from '../../views/ui';
-import { SOURCE_LABEL, Seg, page, type Ctx } from './common';
+import { DateRange, SOURCE_LABEL, Seg, datePeriod, page, type Ctx } from './common';
 
 const rev = new Hono<AppEnv>();
 
@@ -63,19 +63,23 @@ rev.get('/', async (c) => {
   if (tech) { where.push('EXISTS (SELECT 1 FROM credits c WHERE c.review_id = r.id AND c.tech_id = ?)'); params.push(tech); }
   if (platform) { where.push('r.platform = ?'); params.push(platform); }
   if (q) { where.push('(r.reviewer_name LIKE ? OR r.body LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  // Dates: picked in the From/To boxes, or a Dashboard period (?p=) when arriving from there.
+  const per = datePeriod(c);
+  if (per) { where.push('r.posted_at >= ? AND r.posted_at < ?'); params.push(per.range.start, per.range.end); }
   const rows = await all<ReviewRow>(c.env.DB, `SELECT r.* FROM reviews r WHERE ${where.join(' AND ')} ORDER BY r.posted_at DESC LIMIT 26 OFFSET ?`, ...params, (pageNo - 1) * 25);
   const shown = rows.slice(0, 25);
   const [credits, techs] = await Promise.all([creditsFor(c.env.DB, shown.map((r) => r.id)), techOptions(c)]);
   const techName = new Map(techs.map((t) => [t.id, t.first_name]));
   const qs = (extra: Record<string, string>) => {
-    const u = new URLSearchParams({ f, ...(tech ? { tech } : {}), ...(platform ? { platform } : {}), ...(q ? { q } : {}), ...extra });
+    const u = new URLSearchParams({ f, ...(tech ? { tech } : {}), ...(platform ? { platform } : {}), ...(q ? { q } : {}), ...(per ? { p: per.period } : {}), ...extra });
+    for (const [k, v] of [...u]) if (!v) u.delete(k); // extra { p: '' } drops the dates
     return `/admin/reviews?${u}`;
   };
 
   return page(c, {
     title: 'Reviews',
     active: 'reviews',
-    lede: 'Every public review, which tech it was credited to, and why.',
+    lede: per ? <>Reviews from <strong>{per.range.label}</strong>, which tech each was credited to, and why.</> : 'Every public review, which tech it was credited to, and why.',
     actions: (
       <>
         <form method="post" action="/admin/reviews/rematch"><button class="btn btn--ghost btn--sm" type="submit"><Icon name="refresh" size={16} /> Re-run matching</button></form>
@@ -84,7 +88,7 @@ rev.get('/', async (c) => {
     ),
   }, (
     <>
-      <Seg current={f} items={Object.entries(FILTERS).map(([key, v]) => ({ key, label: v.label, href: `/admin/reviews?f=${key}` }))} />
+      <Seg current={f} items={Object.entries(FILTERS).map(([key, v]) => ({ key, label: v.label, href: `/admin/reviews?f=${key}${per ? `&p=${per.period}` : ''}` }))} />
       <form class="filters" method="get" action="/admin/reviews">
         <input type="hidden" name="f" value={f} />
         <label class="sr-only" for="ftech">Tech</label>
@@ -93,7 +97,9 @@ rev.get('/', async (c) => {
         <select id="fplat" name="platform"><option value="">All sites</option>{['google', 'yelp', 'bbb', 'facebook', 'other'].map((p) => <option value={p} selected={p === platform}>{platformLabel(p)}</option>)}</select>
         <label class="sr-only" for="fq">Search</label>
         <input id="fq" name="q" type="search" placeholder="Search name or text" value={q} />
+        <DateRange range={per?.range ?? null} tz={s.timezone} bare />
         <button class="btn btn--ghost btn--sm" type="submit">Filter</button>
+        {per && <a class="btn btn--ghost btn--sm" href={qs({ p: '' })}>All dates</a>}
       </form>
 
       {shown.length ? (
@@ -106,7 +112,7 @@ rev.get('/', async (c) => {
         </div>
       ) : (
         <Empty title={f === 'unassigned' ? 'Nothing waiting' : 'No reviews here'}>
-          {f === 'unassigned' ? 'Every review since tracking started has a tech, or was marked as not a tech review.' : 'Try another filter.'}
+          {f === 'unassigned' && !per ? 'Every review since tracking started has a tech, or was marked as not a tech review.' : per ? 'Try other dates or filters.' : 'Try another filter.'}
         </Empty>
       )}
       <Pager page={pageNo} hasMore={rows.length > 25} base={qs({})} />

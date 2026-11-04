@@ -14,6 +14,7 @@ import type { AppEnv, Tech } from '../env';
 import { clientKey, overLimit } from '../lib/auth';
 import { TECH_COLS, all, one, run, scalar } from '../lib/db';
 import { dayKey, describeGeo, geoFrom, pickLocation } from '../lib/geo';
+import { LINK_CODE, linkByCode } from '../lib/links';
 import { alertCallback, alertLowTap } from '../lib/reviews';
 import { companyName, enabledSites, googleUrlFor, type Settings } from '../lib/settings';
 import { CALL_TIMES, HOUR, clampInt, formatPhone, isBot, line, matchName, newId, now, str, telHref } from '../lib/util';
@@ -68,6 +69,9 @@ pub.get('/', async (c) => {
   const s = c.get('settings');
   const q = str(c.req.query('q'), 60);
   const switched = c.req.query('switched') === '1';
+  // From a tracking link for anyone: each tech's link carries it, and the open counts here (not again after "Not X?").
+  const lq = str(c.req.query('l'), 40);
+  const link = LINK_CODE.test(lq) ? lq : '';
   const techs = await all<Tech>(c.env.DB, `SELECT id, slug, name, first_name, role, photo IS NOT NULL AS photo, updated_at FROM techs WHERE active = 1 ORDER BY sort, name`);
   // A brand-new site: send whoever opened it to create the owner login.
   if (!techs.length && !(await scalar(c.env.DB, `SELECT COUNT(*) FROM admins`))) return c.redirect('/setup', 303);
@@ -83,6 +87,7 @@ pub.get('/', async (c) => {
           <p class="muted">Thanks for choosing {companyName(s)}. Find your technician to rate the visit.</p>
         </div>
         <form method="get" action="/" class="combo" role="search" data-combo>
+          {link && <input type="hidden" name="l" value={link} />}
           <label for="tech-q" class="combo__label">Your technician's name</label>
           <div class="combo__field">
             <Icon name="search" />
@@ -97,7 +102,7 @@ pub.get('/', async (c) => {
               const m = matches.get(t.id);
               return (
                 <li id={`opt-${t.slug}`} data-combo-option data-name={t.name} hidden={!!q && !m}>
-                  <a href={`/${t.slug}?s=picker`}>
+                  <a href={`/${t.slug}?s=picker${link ? `&l=${link}` : ''}`}>
                     <Avatar tech={t} size={40} />
                     <span class="combo__text">
                       <strong class="combo__name">{q && m ? <Highlight text={t.name} ranges={m.ranges} /> : t.name}</strong>
@@ -115,19 +120,59 @@ pub.get('/', async (c) => {
           <p class="sr-only" role="status" data-combo-status>{q ? `${shown} technician${shown === 1 ? '' : 's'} found` : ''}</p>
         </form>
         {google && <p class="fine">Not sure who it was? <a href={google} rel="noopener">Review us on Google</a></p>}
+        {link && !switched && !q && !isStaff(c) && <LinkOpen code={link} />}
       </section>
     </PublicPage>
   ));
 });
 
+// ---------- tracking links (Links in the office menu): /r/crm, /r/invoice, a yard-sign QR ----------
+
+// Where a link sends people. Registered before the tech pages; "r" is also a reserved tech slug.
+pub.get('/r/:code', async (c) => {
+  const s = c.get('settings');
+  const link = await linkByCode(c.env.DB, c.req.param('code'));
+  if (!link) return notFound(c, s);
+  const tech = link.tech_id ? await one<Tech>(c.env.DB, `SELECT ${TECH_COLS} FROM techs WHERE id = ? AND active = 1`, link.tech_id) : null;
+  if (link.dest === 'google' && enabledSites(s).some((x) => x.id === 'google')) {
+    const url = googleUrlFor(s, routeFor(c, s, tech).pick?.id);
+    return render(c, (
+      <PublicPage title={`Review ${companyName(s)} on Google`} s={s}>
+        <section class="pub__card center">
+          <h1>Thanks for reviewing us</h1>
+          <p class="muted">Opening our Google page…</p>
+          <a class="btn btn--red btn--lg btn--block" href={url} rel="noopener">Continue to Google</a>
+          {!isStaff(c) && <LinkOpen code={link.code} go={url} />}
+        </section>
+      </PublicPage>
+    ));
+  }
+  // The rating page first: this tech's, or "Who helped you today?" (also when the link's tech has left).
+  return c.redirect(tech ? `/${tech.slug}?s=link&l=${link.code}` : `/?l=${link.code}`, 302);
+});
+
+// The link's first page is on someone's screen: count the open. Reloads within the hour count once.
+// Cross-site posts are already refused for every route (sameOrigin in src/index.tsx).
+pub.post('/r/:code/open', async (c) => {
+  if (isStaff(c) || isBot(c.req.header('user-agent'))) return c.body(null, 204);
+  const link = await linkByCode(c.env.DB, c.req.param('code'));
+  if (!link) return c.body(null, 204);
+  const ip = await clientKey(c);
+  if ((await overLimit(c.env.DB, `open:${ip}:${link.id}`, 1, HOUR)) || (await overLimit(c.env.DB, 'open:all', 600, HOUR))) return c.body(null, 204);
+  await run(c.env.DB, `INSERT INTO link_opens (id, link_id, created_at) VALUES (?, ?, ?)`, newId('lo'), link.id, now());
+  return c.body(null, 204);
+});
+
 // "Not Sam? Choose your technician": cancel the unrated visit this browser just logged for the wrong tech.
 pub.post('/switch', async (c) => {
-  const tapId = str((await c.req.parseBody()).t, 40);
+  const b = await c.req.parseBody();
+  const tapId = str(b.t, 40);
   if (TAP_ID.test(tapId) && ownTap(c, tapId)) {
     await run(c.env.DB, `DELETE FROM taps WHERE id = ? AND rating IS NULL AND review_id IS NULL AND created_at > ?`, tapId, now() - 2 * HOUR);
   }
   deleteCookie(c, TAP_COOKIE, { path: '/', secure: true });
-  return c.redirect('/?switched=1', 303);
+  const link = str(b.l, 40);
+  return c.redirect(`/?switched=1${LINK_CODE.test(link) ? `&l=${link}` : ''}`, 303); // the tracking link comes along
 });
 
 function Highlight({ text, ranges }: { text: string; ranges: [number, number][] }) {
@@ -150,6 +195,9 @@ pub.get(`/:slug{${SLUG}}`, async (c) => {
   if (!tech) return notFound(c, s);
   const preview = isStaff(c);
   const source = SOURCES.has(c.req.query('s') ?? '') ? c.req.query('s')! : 'link';
+  // Arrived from a tracking link: carry it to the rating. A link made for this tech starts here, so its open counts here
+  // (a link for anyone counted its open on "Who helped you today?").
+  const link = await linkByCode(c.env.DB, c.req.query('l'));
 
   // The visit is not saved here. Browsers preloading links, link scanners and message previews all fetch
   // this page without a person looking at it, so the page reports the visit itself once it is actually
@@ -163,7 +211,7 @@ pub.get(`/:slug{${SLUG}}`, async (c) => {
     if (recent?.rating) return c.redirect(`/${tech.slug}/share?t=${recent.id}`, 303); // already rated: straight to the buttons
     tapId = recent ? recent.id : newId('tap');
   }
-  return render(c, <RatePage s={s} tech={tech} tapId={tapId} source={source} preview={preview} />);
+  return render(c, <RatePage s={s} tech={tech} tapId={tapId} source={source} preview={preview} link={link?.code} linkOpen={link?.tech_id === tech.id} />);
 });
 
 // The page is on someone's screen: count the visit.
@@ -177,8 +225,9 @@ pub.post(`/:slug{${SLUG}}/visit`, async (c) => {
   if ((await overLimit(c.env.DB, `visit:${ip}`, 30, HOUR)) || (await overLimit(c.env.DB, `visit:${ip}:${tech.id}`, 6, HOUR))
     || (await overLimit(c.env.DB, 'visit:all', 300, HOUR))) return c.body(null, 204);
   const source = SOURCES.has(str(b.s, 10)) ? str(b.s, 10) : 'link';
+  const link = await linkByCode(c.env.DB, str(b.l, 40));
   const t = now();
-  await run(c.env.DB, `INSERT OR IGNORE INTO taps (id, tech_id, source, created_at) VALUES (?, ?, ?, ?)`, tapId, tech.id, source, t);
+  await run(c.env.DB, `INSERT OR IGNORE INTO taps (id, tech_id, source, created_at, link_id) VALUES (?, ?, ?, ?, ?)`, tapId, tech.id, source, t, link?.id ?? null);
   setCookie(c, TAP_COOKIE, `${tech.id}.${tapId}.${t}`, { path: '/', httpOnly: true, secure: true, sameSite: 'Lax', maxAge: 2 * 3600 });
   return c.body(null, 204);
 });
@@ -194,8 +243,9 @@ pub.post(`/:slug{${SLUG}}`, async (c) => {
   const errors: Record<string, string> = {};
   if (!rating) errors.rating = 'Tap a star to rate the visit.';
   if (name.length < 2) errors.name = `Add your name so ${tech.first_name} gets credit for your review.`;
+  const link = await linkByCode(c.env.DB, str(body.l, 40));
   if (Object.keys(errors).length) {
-    return render(c, <RatePage s={s} tech={tech} tapId={str(body.t, 40)} source={str(body.s, 10)} preview={isStaff(c)} values={{ rating, name, comment: comment ?? '' }} errors={errors} />, 422);
+    return render(c, <RatePage s={s} tech={tech} tapId={str(body.t, 40)} source={str(body.s, 10)} preview={isStaff(c)} link={link?.code} values={{ rating, name, comment: comment ?? '' }} errors={errors} />, 422);
   }
   const unsaved = { id: 'preview', tech_id: tech.id, customer_name: name, rating, comment, created_at: now(), rated_at: now() };
   // Honeypot or staff preview: show the next step without saving anything.
@@ -215,7 +265,7 @@ pub.post(`/:slug{${SLUG}}`, async (c) => {
     const reuse = !tap && TAP_ID.test(given) && !(await one(c.env.DB, `SELECT 1 FROM taps WHERE id = ?`, given));
     const id = reuse ? given : newId('tap');
     const source = SOURCES.has(str(body.s, 10)) ? str(body.s, 10) : 'link';
-    await run(c.env.DB, `INSERT INTO taps (id, tech_id, source, created_at) VALUES (?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`, id, tech.id, source, t);
+    await run(c.env.DB, `INSERT INTO taps (id, tech_id, source, created_at, link_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING`, id, tech.id, source, t, link?.id ?? null);
     tap = { id, tech_id: tech.id, customer_name: null, rating: null, comment: null, created_at: t, rated_at: null };
   }
   const firstRating = !tap.rating;
@@ -224,8 +274,8 @@ pub.post(`/:slug{${SLUG}}`, async (c) => {
   // A first rating only lands once (two quick taps on Continue: one wins), and a follow-up the office closed stays
   // closed unless the new rating is newly low.
   const saved = await run(c.env.DB, `UPDATE taps SET customer_name = ?, rating = ?, comment = ?, rated_at = ?, resolved_at = CASE WHEN ? THEN NULL ELSE resolved_at END,
-    location_id = ?, location_how = ?, geo = ? WHERE id = ? AND (? = 0 OR rating IS NULL)`,
-    name, rating, comment, t, newlyLow ? 1 : 0, pick?.id ?? null, pick?.how ?? null, describeGeo(geo), tap.id, firstRating ? 1 : 0);
+    location_id = ?, location_how = ?, geo = ?, link_id = COALESCE(link_id, ?) WHERE id = ? AND (? = 0 OR rating IS NULL)`,
+    name, rating, comment, t, newlyLow ? 1 : 0, pick?.id ?? null, pick?.how ?? null, describeGeo(geo), link?.id ?? null, tap.id, firstRating ? 1 : 0);
   if (!saved.meta.changes) return c.redirect(`/${tech.slug}/share?t=${tap.id}`, 303);
   if (firstRating && s.points.rating > 0) {
     await run(c.env.DB, `INSERT INTO points (id, tech_id, amount, reason, tap_id, created_at) VALUES (?, ?, ?, 'Customer rated the visit', ?, ?)`,
@@ -340,8 +390,17 @@ function notFound(c: Context<AppEnv>, s: Settings) {
 
 const WORDS = ['', 'Poor', 'Fair', 'Good', 'Great', 'Excellent'];
 
-function RatePage(p: { s: Settings; tech: Tech; tapId: string; source?: string; preview: boolean; values?: { rating: number; name: string; comment: string }; errors?: Record<string, string> }) {
-  const { s, tech, tapId, source = 'link', preview, values, errors = {} } = p;
+/** Counts a tracking link's open once the page is on someone's screen (public/app.js posts it, like a tag visit). */
+const LinkOpen = ({ code, go }: { code: string; go?: string }) => (
+  <form hidden data-visit={`/r/${code}/open`} data-go={go}><input type="hidden" name="t" value="open" /></form>
+);
+
+/** `link`: the tracking link this visit came from; `linkOpen`: this page is that link's first page, so count the open. */
+function RatePage(p: {
+  s: Settings; tech: Tech; tapId: string; source?: string; preview: boolean; link?: string; linkOpen?: boolean;
+  values?: { rating: number; name: string; comment: string }; errors?: Record<string, string>;
+}) {
+  const { s, tech, tapId, source = 'link', preview, link, linkOpen, values, errors = {} } = p;
   return (
     <PublicPage title={`Rate your visit with ${tech.first_name} · ${companyName(s)}`} s={s}>
       {preview && <p class="preview-note"><Icon name="lock" size={16} /> Preview. Visits from staff phones aren't counted.</p>}
@@ -355,6 +414,7 @@ function RatePage(p: { s: Settings; tech: Tech; tapId: string; source?: string; 
           data-visit={tapId !== 'preview' && !values ? `/${tech.slug}/visit` : undefined}>
           <input type="hidden" name="t" value={tapId} />
           <input type="hidden" name="s" value={source} />
+          {link && <input type="hidden" name="l" value={link} />}
           <fieldset class={`rate ${errors.rating ? 'is-invalid' : ''}`} aria-describedby={errors.rating ? 'err-rating' : undefined}>
             <legend>Your rating</legend>
             <div class="rate__stars">
@@ -402,9 +462,11 @@ function RatePage(p: { s: Settings; tech: Tech; tapId: string; source?: string; 
         {tapId !== 'preview' && (
           <form method="post" action="/switch" class="switch-tech">
             <input type="hidden" name="t" value={tapId} />
+            {link && <input type="hidden" name="l" value={link} />}
             <button class="linkbtn" type="submit">Not {tech.first_name}? Choose your technician</button>
           </form>
         )}
+        {linkOpen && link && tapId !== 'preview' && !values && <LinkOpen code={link} />}
       </section>
     </PublicPage>
   );

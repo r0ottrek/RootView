@@ -100,7 +100,7 @@ export function slugify(s: string): string {
 }
 
 export const RESERVED_SLUGS = new Set([
-  'admin', 'me', 'login', 'logout', 'setup', 'go', 'photo', 'api', 'fonts', 'brand', 'styles', 'app', 'sw',
+  'admin', 'me', 'login', 'logout', 'setup', 'go', 'r', 'photo', 'api', 'fonts', 'brand', 'styles', 'app', 'sw',
   'favicon', 'robots', 'manifest', 'apple-touch-icon', 'team', 'review', 'reviews', 'static', 'assets',
   'asset', 'invite', 'switch', 'theme', 'privacy', 'help', 'support', 'signin', 'signout', 'account', 'null', 'undefined',
 ]);
@@ -167,11 +167,52 @@ export function zonedMidnight(y: number, m: number, d: number, tz: string): numb
   return guess;
 }
 
-export type Period = 'week' | 'month' | 'last' | 'quarter' | 'year' | 'all';
+/** Dates picked in the From/To boxes: '2026-10-01_2026-10-15', both days included. */
+export type CustomPeriod = `${string}_${string}`;
+export type Period = 'week' | 'month' | 'last' | 'quarter' | 'year' | 'all' | CustomPeriod;
 
 export interface Range { start: number; end: number; prevStart: number; prevEnd: number; label: string; prevLabel: string }
 
+/** [year, month, day] of a real date written YYYY-MM-DD (as a date box sends it), or null. */
+function isoDay(v: string | undefined): [number, number, number] | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v ?? '');
+  if (!m) return null;
+  const [y, mo, d] = [+m[1], +m[2], +m[3]];
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  return y >= 2000 && y <= 2100 && t.getUTCMonth() === mo - 1 && t.getUTCDate() === d ? [y, mo, d] : null;
+}
+
+/** "From this date to that date" as a period, or null unless both are real dates. Dates picked backwards are swapped. */
+export function customPeriod(from: string | undefined, to: string | undefined): CustomPeriod | null {
+  if (!isoDay(from) || !isoDay(to)) return null;
+  return from! <= to! ? `${from}_${to}` : `${to}_${from}`;
+}
+
+/** The local date of `ms` as YYYY-MM-DD, for date boxes. */
+export function isoDayOf(ms: number, tz: string): string {
+  const p = zonedParts(ms, tz);
+  return `${p.y}-${String(p.m).padStart(2, '0')}-${String(p.d).padStart(2, '0')}`;
+}
+
+/** Whole local days, midnight to midnight; a range running into today stops at now. Compared with as many days before. */
+function customRange(period: CustomPeriod, tz: string, at: number): Range {
+  const [[y1, m1, d1], [y2, m2, d2]] = period.split('_').map((v) => isoDay(v)!);
+  const days = Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / DAY) + 1;
+  const start = zonedMidnight(y1, m1, d1, tz);
+  const end = Math.max(start, Math.min(zonedMidnight(y2, m2, d2 + 1, tz), at + 1));
+  const prevStart = zonedMidnight(y1, m1, d1 - days, tz);
+  const md = { month: 'short', day: 'numeric' } as const;
+  const mdy = { month: 'short', day: 'numeric', year: 'numeric' } as const;
+  const last = fmtDate(zonedMidnight(y2, m2, d2, tz), tz, mdy);
+  return {
+    start, end, prevStart, prevEnd: Math.min(start, prevStart + (end - start)),
+    label: days === 1 ? last : `${fmtDate(start, tz, y1 === y2 ? md : mdy)} – ${last}`,
+    prevLabel: days === 1 ? 'the day before' : `the ${days} days before`,
+  };
+}
+
 export function periodRange(period: Period, tz: string, at = now()): Range {
+  if (period.includes('_')) return customRange(period as CustomPeriod, tz, at);
   const p = zonedParts(at, tz);
   const end = at + 1;
   switch (period) {
@@ -207,7 +248,11 @@ export function periodRange(period: Period, tz: string, at = now()): Range {
 }
 
 export function parsePeriod(v: string | undefined, fallback: Period = 'month'): Period {
-  return (['week', 'month', 'last', 'quarter', 'year', 'all'] as const).includes(v as Period) ? (v as Period) : fallback;
+  if (v?.includes('_')) {
+    const parts = v.split('_');
+    return (parts.length === 2 && customPeriod(parts[0], parts[1])) || fallback;
+  }
+  return (['week', 'month', 'last', 'quarter', 'year', 'all'] as readonly string[]).includes(v ?? '') ? (v as Period) : fallback;
 }
 
 export function fmtDate(ms: number, tz: string, opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' }): string {

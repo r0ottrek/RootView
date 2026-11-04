@@ -188,9 +188,29 @@ for (let d = DAYS; d >= 0; d--) {
   }
 }
 
+// ---------- tracking links (Links in the office menu) ----------
+// Most texted visits came through the CRM's automated text or the invoice email, where the customer picked their
+// tech. Uses its own generator, so everything above comes out the same as before links existed.
+let seed2 = 20261103;
+const rand2 = () => { seed2 |= 0; seed2 = (seed2 + 0x6d2b79f5) | 0; let t = Math.imul(seed2 ^ (seed2 >>> 15), 1 | seed2); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+const DEMO_LINKS = [
+  { id: 'lnk_demo_crm', code: 'crm', name: 'CRM texts', dest: 'rate' },
+  { id: 'lnk_demo_invoice', code: 'invoice', name: 'Invoice emails', dest: 'rate' },
+  { id: 'lnk_demo_website', code: 'website', name: 'Website review button', dest: 'google' },
+];
+const linkOpens = [];
+for (const tap of taps) {
+  if (tap.created_at < trackingStart || tap.source !== 'text' || rand2() > 0.8) continue;
+  tap.source = 'picker';
+  tap.link_id = rand2() < 0.62 ? 'lnk_demo_crm' : 'lnk_demo_invoice';
+  linkOpens.push([tap.link_id, tap.created_at - Math.round(10e3 + rand2() * 50e3)]);
+  if (rand2() < 0.3) linkOpens.push([tap.link_id, tap.created_at - Math.round(rand2() * 3 * DAY)]); // opened, didn't pick a tech
+}
+for (let t = trackingStart; t < now; t += (0.5 + rand2() * 3) * DAY) linkOpens.push(['lnk_demo_website', Math.round(t)]);
+
 // ---------- SQL ----------
 const pw = await hashPassword(ADMIN_PASSWORD);
-sql.push('DELETE FROM points; DELETE FROM credits; DELETE FROM redemptions; DELETE FROM rewards; DELETE FROM reviews; DELETE FROM taps; DELETE FROM sessions;');
+sql.push('DELETE FROM points; DELETE FROM credits; DELETE FROM redemptions; DELETE FROM rewards; DELETE FROM reviews; DELETE FROM taps; DELETE FROM link_opens; DELETE FROM links; DELETE FROM sessions;');
 sql.push(`DELETE FROM techs WHERE id LIKE 't_demo_%';`);
 sql.push(`DELETE FROM admins WHERE email = ${q(ADMIN_EMAIL)};`);
 sql.push(`INSERT INTO admins (id, name, email, password_hash, role, created_at) VALUES (${q(id('adm'))}, 'Demo Owner', ${q(ADMIN_EMAIL)}, ${q(pw)}, 'owner', ${now});`);
@@ -223,10 +243,17 @@ const SETTINGS = {
 for (const [k, v] of Object.entries(SETTINGS)) {
   sql.push(`INSERT INTO settings (key, value) VALUES (${q(k)}, ${q(JSON.stringify(v))}) ON CONFLICT (key) DO UPDATE SET value = excluded.value;`);
 }
+for (const l of DEMO_LINKS) {
+  sql.push(`INSERT INTO links (id, code, name, dest, created_by, created_at) VALUES (${q(l.id)}, ${q(l.code)}, ${q(l.name)}, ${q(l.dest)}, 'Demo Owner', ${trackingStart});`);
+}
 for (let i = 0; i < taps.length; i += 200) {
   const rows = taps.slice(i, i + 200).map((t) =>
-    `(${q(t.id)}, ${q(t.tech_id)}, ${q(t.source)}, ${q(t.customer_name)}, ${q(t.rating)}, ${q(t.comment)}, ${q(t.site)}, ${t.created_at}, ${q(t.rated_at)}, ${q(t.clicked_at)}, ${q(t.resolved_at)}, ${t.resolved_at ? "'Demo Owner'" : 'NULL'}, ${q(t.callback_phone)}, ${q(t.callback_time)}, ${q(t.callback_at)}, ${q(t.followup_status)}, ${q(t.followup_note)}, ${q(t.resolved_at)}, ${t.resolved_at ? "'Demo Owner'" : 'NULL'})`);
-  sql.push(`INSERT INTO taps (id, tech_id, source, customer_name, rating, comment, site, created_at, rated_at, clicked_at, resolved_at, resolved_by, callback_phone, callback_time, callback_at, followup_status, followup_note, followup_at, followup_by) VALUES\n${rows.join(',\n')};`);
+    `(${q(t.id)}, ${q(t.tech_id)}, ${q(t.source)}, ${q(t.customer_name)}, ${q(t.rating)}, ${q(t.comment)}, ${q(t.site)}, ${t.created_at}, ${q(t.rated_at)}, ${q(t.clicked_at)}, ${q(t.resolved_at)}, ${t.resolved_at ? "'Demo Owner'" : 'NULL'}, ${q(t.callback_phone)}, ${q(t.callback_time)}, ${q(t.callback_at)}, ${q(t.followup_status)}, ${q(t.followup_note)}, ${q(t.resolved_at)}, ${t.resolved_at ? "'Demo Owner'" : 'NULL'}, ${q(t.link_id)})`);
+  sql.push(`INSERT INTO taps (id, tech_id, source, customer_name, rating, comment, site, created_at, rated_at, clicked_at, resolved_at, resolved_by, callback_phone, callback_time, callback_at, followup_status, followup_note, followup_at, followup_by, link_id) VALUES\n${rows.join(',\n')};`);
+}
+for (let i = 0; i < linkOpens.length; i += 200) {
+  const rows = linkOpens.slice(i, i + 200).map(([link, at], k) => `(${q(`lo_demo_${i + k}`)}, ${q(link)}, ${at})`);
+  sql.push(`INSERT INTO link_opens (id, link_id, created_at) VALUES\n${rows.join(',\n')};`);
 }
 reviews.sort((a, b) => a.posted - b.posted);
 for (let i = 0; i < reviews.length; i += 200) {

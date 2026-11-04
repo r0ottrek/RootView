@@ -36,6 +36,7 @@ interface ActRow {
   callback_phone: string | null; callback_time: string | null; callback_at: number | null;
   followup_status: 'called' | 'resolved' | 'unresolved' | null; followup_note: string | null; followup_at: number | null; followup_by: string | null;
   location_id: string | null; location_how: RouteHow | null; geo: string | null;
+  link_name: string | null; // the tracking link the visit came through (Links)
 }
 
 /** "Google" or, with two or more locations, "Google · Downtown" plus why that profile was picked. */
@@ -76,7 +77,8 @@ other.get('/activity', async (c) => {
   // Open follow-ups: people waiting for a call first, then newest.
   const order = f === 'low' ? 'p.callback_at IS NULL, COALESCE(p.callback_at, p.created_at) DESC' : 'p.created_at DESC';
   const rows = await all<ActRow>(c.env.DB, `
-    SELECT p.*, t.slug, t.first_name, t.name, t.photo IS NOT NULL AS photo, t.updated_at FROM taps p JOIN techs t ON t.id = p.tech_id
+    SELECT p.*, t.slug, t.first_name, t.name, t.photo IS NOT NULL AS photo, t.updated_at, lk.name AS link_name
+    FROM taps p JOIN techs t ON t.id = p.tech_id LEFT JOIN links lk ON lk.id = p.link_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order} LIMIT 51 OFFSET ?`, ...params, (pageNo - 1) * 50);
   const techs = await all<{ id: string; name: string }>(c.env.DB, `SELECT id, name FROM techs ORDER BY active DESC, sort, name`);
   const shown = rows.slice(0, 50);
@@ -118,7 +120,7 @@ other.get('/activity', async (c) => {
                   <tr class={p.rating != null && p.rating <= s.alert_threshold && !p.resolved_at ? 'is-alert' : ''}>
                     <td class="nowrap" title={fmtDateTime(p.created_at, s.timezone)}>{relTime(p.created_at, s.timezone)}</td>
                     <td><a class="person" href={`/admin/team/${p.tech_id}`}><Avatar tech={{ id: p.tech_id, name: p.name, photo: p.photo, updated_at: p.updated_at }} size={24} /><span>{p.first_name}</span></a></td>
-                    <td class="nowrap">{SOURCE_LABEL[p.source] ?? p.source}</td>
+                    <td class="nowrap">{SOURCE_LABEL[p.source] ?? p.source}{p.link_name && <span class="small dim block">Link: {p.link_name}</span>}</td>
                     <td>{p.customer_name ?? <span class="dim">Didn't finish</span>}{p.comment && <p class="small muted">{p.comment}</p>}</td>
                     <td>{p.rating ? <Stars rating={p.rating} size={12} /> : <span class="dim">—</span>}</td>
                     <td><WentTo p={p} s={s} /></td>
@@ -160,7 +162,7 @@ function FollowUpCard({ p, s, back: ret }: { p: ActRow; s: Settings; back: strin
         <Stars rating={p.rating} />
         <span class="rev__who">
           <strong>{p.customer_name ?? 'Customer'}</strong>
-          <span class="dim small">rated <a href={`/admin/team/${p.tech_id}`}>{p.first_name}</a> · {relTime(p.created_at, s.timezone)} · {SOURCE_LABEL[p.source] ?? p.source}</span>
+          <span class="dim small">rated <a href={`/admin/team/${p.tech_id}`}>{p.first_name}</a> · {relTime(p.created_at, s.timezone)} · {SOURCE_LABEL[p.source] ?? p.source}{p.link_name ? ` · Link: ${p.link_name}` : ''}</span>
         </span>
         <span class="followup__status"><Chip tone={p.callback_at && !p.followup_status ? 'red' : status.tone}>{p.callback_at && !p.followup_status ? 'Wants a call' : status.label}</Chip></span>
       </header>

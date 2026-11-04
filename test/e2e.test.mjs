@@ -540,3 +540,101 @@ test('a tech working at another location today sends every customer there, until
   await post('/me/today', { loc: '' }, tech);
   assert.match(await rateAndGoogle('maya', 'Ivy Jones', ELSEWHERE), /lakeside-test/, 'back to automatic');
 });
+
+// ---------- dates and tracking links ----------
+
+test('pick any dates on the Dashboard and the Reviews page: the numbers and the review list follow', async () => {
+  await post('/admin/reviews/new', { platform: 'google', date: today(), reviewer: 'Rita Readout', rating: '5', body: 'On time and friendly.', tech: '' }, admin);
+  const key = `${today()}_${today()}`;
+  const dash = await get(`/admin?from=${today()}&to=${today()}`, admin);
+  assert.match(dash, new RegExp(`name="from" type="date" value="${today()}"`), 'the boxes show the picked dates');
+  assert.ok(dash.includes('Rita Readout'), "today's reviews are listed");
+  assert.ok(dash.includes(`href="/admin/reviews?f=all&amp;p=${key}"`), 'the review list and the New reviews number open the same dates');
+
+  assert.match(await get('/admin?p=week', admin), /name="from" type="date" value="\d{4}-\d{2}-\d{2}"/, 'a preset fills in its own dates, ready to adjust');
+  assert.match(await get('/admin?from=2020-01-01&to=2020-01-31', admin), /No reviews Jan 1 – Jan 31, 2020/);
+  assert.match(await get(`/admin?from=${today()}&to=2020-01-01`, admin), /Jan 1, 2020 – /, 'dates picked backwards are swapped');
+  assert.equal((await req('/admin?from=2020-02-30&to=nope', { headers: { cookie: admin } })).status, 200, 'nonsense dates fall back to the period');
+
+  const list = await get(`/admin/reviews?f=all&from=${today()}&to=${today()}`, admin);
+  assert.ok(list.includes('Rita Readout'));
+  assert.ok(list.includes(`href="/admin/reviews?f=credited&amp;p=${key}"`), 'switching tabs keeps the dates');
+  assert.match(list, />All dates</);
+  assert.match(await get('/admin/reviews?f=all&from=2020-01-01&to=2020-01-02', admin), /Try other dates or filters/);
+  assert.ok((await get('/admin/reviews?f=all&from=2020-01-01', admin)).includes('Rita Readout'), 'From alone runs through today');
+  assert.ok(!(await get('/admin/reviews?f=all&p=2020-01-01_2020-01-02', admin)).includes('Rita Readout'), 'a Dashboard period in the address works too');
+});
+
+test('tracking links: a CRM link counts opens, follows the customer to the rating and review, and shows where reviews came from', async () => {
+  const make = (fields, cookie = admin) => post('/admin/links', fields, cookie);
+  assert.match(flashIn(await make({ name: 'CRM texts', code: 'CRM', dest: 'rate', tech: '' })), /Made \/r\/crm\./);
+  assert.match(flashIn(await make({ name: 'Another', code: 'crm' })), /\/r\/crm is already taken/);
+  assert.match(flashIn(await make({ name: '', code: 'zz' })), /Give the link a name/);
+  assert.match(flashIn(await make({ name: 'Too short', code: 'a' })), /Use 2 to 40 letters/);
+  await make({ name: 'Maya business card', dest: 'rate', tech: TECH.maya }); // the address comes from the name
+  assert.match(flashIn(await make({ name: 'Website button', code: 'site', dest: 'google' }, manager)), /Made \/r\/site/, 'managers can make links');
+  assert.equal((await post('/admin/team/new', { name: 'R Person', slug: 'r' }, admin)).status, 422, '"r" is kept free for links');
+
+  // For anyone: /r/crm opens "Who helped you today?", every tech's link carries it, and the open is counted there, once.
+  const go = await req('/r/crm');
+  assert.equal(go.status, 302);
+  assert.equal(go.headers.get('location'), '/?l=crm');
+  const who = customer(250);
+  const picker = await (await req('/?l=crm', { headers: who })).text();
+  assert.ok(picker.includes('href="/maya?s=picker&amp;l=crm"'), "each tech's link carries the tracking link");
+  assert.match(picker, /data-visit="\/r\/crm\/open"/);
+  for (let i = 0; i < 2; i++) assert.equal((await post('/r/crm/open', { t: 'open' }, '', who)).status, 204);
+  assert.equal((await post('/r/crm/open', { t: 'open' }, admin)).status, 204, 'staff are ignored');
+  assert.equal((await post('/r/crm/open', { t: 'open' }, '', { ...who, origin: 'https://evil.example' })).status, 403, 'other sites cannot post opens');
+
+  // The tech's page carries it into the visit, the rating and the review-site click; the review is then matched.
+  const page = await req('/maya?s=picker&l=crm', { headers: who });
+  const html = await page.text();
+  assert.match(html, /name="l" value="crm"/);
+  assert.ok(!html.includes('/r/crm/open'), 'the open was already counted on the first page');
+  const t = tapIdIn(html);
+  const visit = await post('/maya/visit', { t, s: 'picker', l: 'crm' }, '', who);
+  await post('/maya', { t, s: 'picker', l: 'crm', rating: '5', name: 'Cora Crmson' }, cookiesFrom(visit), who);
+  await req(`/go/${t}/yelp`, { headers: who });
+  await post('/admin/reviews/new', { platform: 'yelp', date: today(), reviewer: 'Cora C.', rating: '5', body: 'Easy to book from the text.', tech: '' }, admin);
+
+  const rowOf = (list, name) => { const i = list.indexOf(`<strong>${name}</strong>`); return list.slice(i, list.indexOf('</tr>', i)); };
+  const nums = (row) => [...row.matchAll(/<td class="num tnum[^"]*">([^<]*)<\/td>/g)].map((m) => m[1]);
+  const list = await get('/admin/links', admin);
+  assert.deepEqual(nums(rowOf(list, 'CRM texts')), ['1', '1', '5.0', '1', '1'], 'opened, rated, average, went to a review site, reviews');
+  assert.match(rowOf(list, 'CRM texts'), /\/r\/crm<\/code>/);
+  assert.match(rowOf(list, 'Maya business card'), /\/r\/maya-business-card<\/code>/);
+  assert.match(rowOf(list, 'Maya business card'), /Maya Okonkwo only/);
+  assert.deepEqual(nums(rowOf(await get('/admin/links?from=2020-01-01&to=2020-01-31', admin), 'CRM texts')), ['0', '0', '—', '0', '0'], 'counts follow the picked dates');
+
+  const dash = await get('/admin?p=all', admin);
+  assert.match(dash, /Where reviews came from/);
+  assert.match(dash, /Link: <strong>CRM texts<\/strong>/);
+  assert.match(await get('/admin/activity', admin), /Link: CRM texts/);
+
+  // A tech's own link goes straight to their page, which counts the open; "Not Maya?" keeps the link.
+  assert.equal((await req('/r/maya-business-card')).headers.get('location'), '/maya?s=link&l=maya-business-card');
+  assert.match(await (await req('/maya?s=link&l=maya-business-card', { headers: customer(251) })).text(), /data-visit="\/r\/maya-business-card\/open"/);
+  assert.equal((await post('/switch', { t: 'tap_nothing123', l: 'maya-business-card' })).headers.get('location'), '/?switched=1&l=maya-business-card');
+  assert.equal((await post('/switch', { t: 'tap_nothing123', l: '"><script>' })).headers.get('location'), '/?switched=1', 'only a real link code is carried');
+
+  // Straight to Google: a page that counts the open and moves on (a button for phones with scripts off).
+  const site = await (await req('/r/site')).text();
+  assert.match(site, /href="https:\/\/[^"]+"[^>]*>Continue to Google/);
+  assert.match(site, /data-visit="\/r\/site\/open" data-go="https:\/\//);
+  await post('/r/site/open', { t: 'open' }, '', customer(252));
+  const after = await get('/admin/links', admin);
+  assert.deepEqual(nums(rowOf(after, 'Website button')), ['1', '—', '—', '1', '—'], 'Google links count opens only');
+  assert.equal((await req('/r/nope')).status, 404);
+
+  // Hiding tidies the list; the link and its QR code keep working.
+  const id = after.match(/id="l-(lnk_[^"]+)"><th scope="row"><strong>CRM texts<\/strong>/)[1];
+  const qr = await req(`/admin/links/${id}/qr.svg`, { headers: { cookie: admin } });
+  assert.match(qr.headers.get('content-type'), /^image\/svg\+xml/);
+  assert.match(qr.headers.get('content-disposition'), /review-link-crm\.svg/);
+  assert.match(flashIn(await post(`/admin/links/${id}/archive`, {}, admin)), /CRM texts is hidden/);
+  assert.match(await get('/admin/links', admin), /Hidden links \(1\)/);
+  assert.equal((await req('/r/crm')).headers.get('location'), '/?l=crm', 'a hidden link still works');
+  assert.match(await get('/admin/log', admin), /link\.add/);
+  assert.match((await req('/admin/links')).headers.get('location') ?? '', /^\/admin\/login/, 'signed-out visitors cannot see links');
+});

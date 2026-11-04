@@ -6,7 +6,7 @@ import { kpis, leaderboard, weeklyReviews } from '../../lib/stats';
 import { avg1, fmtDate, parsePeriod, pct, periodRange, relTime } from '../../lib/util';
 import { ReviewCard, creditsFor } from '../../views/review';
 import { Avatar, ColumnChart, Empty, Icon, Stat, trend } from '../../views/ui';
-import { Seg, page } from './common';
+import { DateRange, Seg, page, pickedDates } from './common';
 
 const dash = new Hono<AppEnv>();
 
@@ -25,14 +25,25 @@ dash.get('/', async (c) => {
   // Demo mode drains the whole backlog at once; locally there is no per-request limit.
   let pending = await processPending(c.env, s, s.demo ? 50 : 8);
   for (let i = 0; s.demo && pending.remaining > 0 && i < 30; i++) pending = await processPending(c.env, s, 50);
-  const period = parsePeriod(c.req.query('p'));
+  const period = pickedDates(c) ?? parsePeriod(c.req.query('p'));
   const range = periodRange(period, s.timezone);
-  const [k, board, weeks, recent] = await Promise.all([
+  // "this month" in a sentence; picked dates keep their capitals ("Oct 1 – Oct 15, 2026").
+  const inline = period.includes('_') ? range.label : range.label.toLowerCase();
+  const [k, board, weeks, recent, origins] = await Promise.all([
     kpis(c.env.DB, range.start, range.end, range.prevStart, range.prevEnd, s.tracking_start, s.alert_threshold),
     leaderboard(c.env.DB, range.start, range.end),
     weeklyReviews(c.env.DB, s.timezone, 12, Date.now()),
-    all<ReviewRow>(c.env.DB, `SELECT * FROM reviews WHERE status <> 'history' ORDER BY posted_at DESC LIMIT 5`),
+    all<ReviewRow>(c.env.DB, `SELECT * FROM reviews WHERE posted_at >= ? AND posted_at < ? ORDER BY posted_at DESC LIMIT 5`, range.start, range.end),
+    // Each review by the visit it matched (the first, if a crew's visits all matched): a tracking link, else how the visit began.
+    all<{ link: string | null; source: string | null; n: number }>(c.env.DB, `
+      SELECT l.name AS link, CASE WHEN l.id IS NULL THEN p.source END AS source, COUNT(*) AS n
+      FROM reviews r
+      LEFT JOIN taps p ON p.id = (SELECT id FROM taps WHERE review_id = r.id ORDER BY created_at LIMIT 1)
+      LEFT JOIN links l ON l.id = p.link_id
+      WHERE r.posted_at >= ? AND r.posted_at < ?
+      GROUP BY 1, 2 ORDER BY n DESC`, range.start, range.end),
   ]);
+  const originTotal = origins.reduce((n, o) => n + o.n, 0);
   const credits = await creditsFor(c.env.DB, recent.map((r) => r.id));
   const admin = c.get('admin');
   const team = admin.role === 'owner'
@@ -81,8 +92,9 @@ dash.get('/', async (c) => {
           </ol>
         </section>
       )}
+      <DateRange range={range} tz={s.timezone} required />
       <section class="kpis">
-        <Stat label="New reviews" value={k.reviews} sub={tReviews?.sub} tone={tReviews?.tone} href="/admin/reviews?f=all" />
+        <Stat label="New reviews" value={k.reviews} sub={tReviews?.sub} tone={tReviews?.tone} href={`/admin/reviews?f=all&p=${period}`} />
         <Stat label="Average rating" value={<>{avg1(k.avg_rating)}<span class="stat__unit">★</span></>}
           sub={k.prev_avg != null && range.prevLabel ? `${avg1(k.prev_avg)} ${range.prevLabel}` : undefined} />
         <Stat label="Customers who tapped" value={k.taps} sub={tTaps?.sub} tone={tTaps?.tone} href="/admin/activity" />
@@ -130,7 +142,7 @@ dash.get('/', async (c) => {
       </div>
 
       <section class="card">
-        <div class="row-between"><h2 class="h-sm">Leaderboard · {range.label.toLowerCase()}</h2><a class="small" href="/admin/team">Team</a></div>
+        <div class="row-between"><h2 class="h-sm">Leaderboard · {inline}</h2><a class="small" href="/admin/team">Team</a></div>
         {active.length ? (
           <div class="tbl-wrap">
             <table class="tbl">
@@ -160,18 +172,45 @@ dash.get('/', async (c) => {
             </table>
           </div>
         ) : (
-          <Empty title={`No activity ${range.label.toLowerCase()}`}>Once techs hand out their tags, taps and matched reviews show up here.</Empty>
+          <Empty title={`No activity ${inline}`}>Once techs hand out their tags, taps and matched reviews show up here.</Empty>
         )}
       </section>
 
+      <section class="card" id="sources">
+        <div class="row-between"><h2 class="h-sm">Where reviews came from · {inline}</h2><a class="small" href="/admin/links">Tracking links</a></div>
+        {origins.length ? (
+          <ul class="plain sources" role="list">
+            {origins.map((o) => {
+              const share = originTotal ? Math.round((o.n / originTotal) * 100) : 0;
+              return (
+                <li class="sources__row">
+                  <span>{o.link ? <>Link: <strong>{o.link}</strong></> : o.source ? ORIGIN[o.source] ?? o.source : <span class="dim">Not traced to a visit</span>}</span>
+                  <span class="sources__bar" aria-hidden="true"><span style={`--w:${share}%`} /></span>
+                  <span class="tnum"><strong>{o.n}</strong> <span class="dim small">{share}%</span></span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : <p class="muted small">No reviews {inline}.</p>}
+        <p class="hint mt-sm">"Not traced" means the review didn't match a visit to your rating pages: the customer went to Google on their own, or came from somewhere you don't track yet. Make a tracking link for each place you ask for reviews to see more here.</p>
+      </section>
+
       <section class="card">
-        <div class="row-between"><h2 class="h-sm">Latest reviews</h2><a class="small" href="/admin/reviews?f=all">All reviews</a></div>
+        <h2 class="h-sm">Reviews · {inline}</h2>
         {recent.length ? (
-          <div class="stack-md">{recent.map((r) => <ReviewCard r={r} tz={s.timezone} credits={credits.get(r.id)} href={`/admin/reviews/${r.id}`} clamp />)}</div>
-        ) : <Empty title="No reviews yet">Connect Google in Settings, or add a Yelp or BBB review by hand.</Empty>}
+          <>
+            <div class="stack-md">{recent.map((r) => <ReviewCard r={r} tz={s.timezone} credits={credits.get(r.id)} href={`/admin/reviews/${r.id}`} clamp />)}</div>
+            <div class="cluster mt-md">
+              <a class="btn btn--ghost btn--sm" href={`/admin/reviews?f=all&p=${period}`}>{k.reviews > recent.length ? `See all ${k.reviews} reviews` : 'Open in Reviews'}</a>
+            </div>
+          </>
+        ) : <Empty title={`No reviews ${inline}`}>Pick other dates above. Once Google is connected, new reviews arrive every 15 minutes; Yelp and BBB reviews are added by hand.</Empty>}
       </section>
     </>
   ));
 });
+
+/** How a review's visit began, when it didn't come through a tracking link. */
+const ORIGIN: Record<string, string> = { nfc: "Tech's tag (NFC tap)", qr: "Tech's QR code", text: 'Texted link', picker: 'Company QR ("Who helped you today?")', link: "Tech's link" };
 
 export default dash;

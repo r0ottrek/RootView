@@ -2,6 +2,27 @@
 
 What changed in each release. Upgrading? Pull the new code, then run `npm install`, `npm run db:migrate:remote` and `npm run deploy` (see the README's "Updating later").
 
+## 1.4.0 (2026-11-04)
+
+Run `npm run db:migrate:remote` before `npm run deploy`: this release adds database migration `0003_links.sql`.
+
+### Added
+
+- **Pick any dates.** From [date] to [date] on the Dashboard, the Reviews page and Links: whole days, both included, compared with the same number of days before. A preset fills the boxes with its own dates so you can nudge them; the Reviews page keeps the dates when you switch tabs, with "All dates" to clear them.
+- **Tracking links** (Admin → Links). A named link and QR code for each place you ask for reviews, such as your CRM's texts (`/r/crm`), invoice emails or a yard sign. Each link is for anyone or for one tech, and opens your rating page or goes straight to Google. See opens, ratings, average, clicks and matched reviews per link, for any period. Codes never change, so printed QR codes keep working. Managers can make links; every change is in the activity log.
+- **Where reviews came from** on the Dashboard: the period's reviews by tracking link, by how the visit began, or not traced to a visit.
+- Tag activity shows the tracking link a visit came through.
+- The demo has three tracking links with made-up history.
+
+### Changed
+
+- The Dashboard's review list shows the chosen period ("Reviews · Oct 1 – Oct 15, 2026") with a link to all of them.
+- The `/r` address is reserved for tracking links, so no tech can have `r` as their link.
+
+### Fixed
+
+- Spacing helpers (`mt-sm`, `mt-md`) now apply inside cards, so hints and buttons there are no longer jammed against what's above them.
+
 ## 1.3.0 (2026-10-20)
 
 ### Changed
